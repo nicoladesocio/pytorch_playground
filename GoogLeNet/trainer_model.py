@@ -1,0 +1,17 @@
+try:
+    from trainer.model_base import Model
+except ModuleNotFoundError:
+    from model_base import Model
+
+
+class GoogLeNetModel(Model):
+    name = "googlenet"
+    train_script = "train.py"
+    default_parameters = {
+        "version_name": "googlenet_v1",
+        "num_classes": 64,
+        "checkpoint_path": "/workspace/GoogLeNet/checkpoints",
+        "train_samples": 51200,
+        "val_samples": 2048,
+        "batch_size": 64,
+    }

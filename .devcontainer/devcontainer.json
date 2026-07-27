@@ -1,0 +1,31 @@
+{
+    "name": "PyTorch CUDA Development",
+    "dockerFile": "../Dockerfile",
+    "buildArgs": [
+        "--network=host"
+    ],
+    "runArgs": [
+        "--network=host",
+        "--gpus=all",
+        "--shm-size=32gb"
+    ],
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-toolsai.jupyter"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/opt/conda/bin/python",
+                "python.linting.enabled": true,
+                "python.linting.pylintEnabled": true,
+                "python.formatting.provider": "black"
+            }
+        }
+    },
+    "postCreateCommand": "pip install --break-system-packages -e .",
+    "remoteUser": "root"
+}
