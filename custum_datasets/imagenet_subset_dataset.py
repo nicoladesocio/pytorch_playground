@@ -11,6 +11,34 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset as TorchDataset
 
 
+def build_imagenet_transform(image_size=224, is_training=True):
+    """Build the 2012-style (AlexNet paper) train/val transform pipeline.
+    Shared by ImageNetSubsetDataset and StreamingImageNetSubsetDataset.
+    """
+    # Note: Original paper resized to 256, then took a 224 crop
+    if is_training:
+        transform_list = [
+            transforms.Resize(256),
+            transforms.RandomCrop(image_size),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
+            transforms.ToTensor(),
+        ]
+    else:
+        # For validation, we typically just take the Center Crop
+        transform_list = [
+            transforms.Resize(256),
+            transforms.CenterCrop(image_size),
+            transforms.ToTensor(),
+        ]
+
+    # Standard ImageNet normalization (applied to [0,1] images)
+    transform_list.append(
+        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+    )
+    return transforms.Compose(transform_list)
+
+
 class ImageNetSubsetDataset(TorchDataset):
     """Wrap a HuggingFace image-classification dataset with 2012-style (AlexNet
     paper) data augmentation, optional class-id remapping to a contiguous
@@ -34,28 +62,7 @@ class ImageNetSubsetDataset(TorchDataset):
             self.hashes_file = os.path.join(debug_images_dir, ".saved_image_hashes.json")
             self.saved_image_hashes = self._load_hashes()
 
-        # Note: Original paper resized to 256, then took a 224 crop
-        if is_training:
-            transform_list = [
-                transforms.Resize(256),
-                transforms.RandomCrop(image_size),
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
-                transforms.ToTensor(),
-            ]
-        else:
-            # For validation, we typically just take the Center Crop
-            transform_list = [
-                transforms.Resize(256),
-                transforms.CenterCrop(image_size),
-                transforms.ToTensor(),
-            ]
-
-        # Standard ImageNet normalization (applied to [0,1] images)
-        transform_list.append(
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
-        )
-        self.transform = transforms.Compose(transform_list)
+        self.transform = build_imagenet_transform(image_size=image_size, is_training=is_training)
 
     def _load_hashes(self):
         """Load previously saved image hashes from file."""

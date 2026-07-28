@@ -7,9 +7,8 @@ if PROJECT_ROOT not in sys.path:
 
 import model
 import argparse
-from utils.datasets_utils import load_dataset_subset, create_subset_sampler
 from utils.model_utils import get_latest_checkpoint, save_model_checkpoint
-from custum_datasets.imagenet_subset_dataset import ImageNetSubsetDataset
+from custum_datasets.streaming_imagenet_dataset import StreamingImageNetSubsetDataset, pick_target_classes
 from torch.utils.data import DataLoader
 import lightning as pl
 import torch
@@ -30,16 +29,8 @@ if __name__ == "__main__":
     argparse_argument_parser.add_argument("--batch_size", type=int, default=96, help="Batch size for training")
     args = argparse_argument_parser.parse_args()
 
-    print("\nLoading ImageNet subset...")
-    train_dataset, validation_dataset = load_dataset_subset(
-            dataset_name="imagenet-1k",
-            cache_root="/workspace/Data/datasets/",
-            train_samples=args.train_samples,
-            val_samples=args.val_samples
-        )
-
-    # If a checkpoint exists, restore target_classes from it so the sampler
-    # uses exactly the same class subset the model was trained on.
+    # If a checkpoint exists, restore target_classes from it so training resumes
+    # on the same class subset (exact images seen are allowed to differ).
     checkpoint_path = get_latest_checkpoint(args.checkpoint_path)
     print(f"Checkpoint path: {checkpoint_path}")
     if checkpoint_path and os.path.exists(checkpoint_path):
@@ -48,16 +39,29 @@ if __name__ == "__main__":
         target_classes = lightning_model.hparams.target_classes
     else:
         print("No checkpoint found, starting fresh training run")
-        # Fresh run: let the sampler pick the subset, then create the model.
-        target_classes = None
+        target_classes = pick_target_classes("imagenet-1k", args.num_classes)
 
-    # Sampler uses target_classes=None on first run (picks freely) or the saved list when resuming.
-    train_sampler, target_classes = create_subset_sampler(train_dataset, max_num_classes=64, target_classes=target_classes)
-    val_sampler, _ = create_subset_sampler(validation_dataset, max_num_classes=64, target_classes=target_classes)
-
-    # Wrap in ImageNetSubsetDataset; it builds class_to_idx internally from target_classes
-    train_dataset = ImageNetSubsetDataset(train_dataset, image_size=227, is_training=True, target_classes=target_classes)
-    validation_dataset = ImageNetSubsetDataset(validation_dataset, image_size=227, is_training=False, target_classes=target_classes)
+    # Streaming datasets: no blocking pre-download. Cached images (from a
+    # previous run) are read straight off disk; anything else is pulled from
+    # the live HF stream and cached in the background as training proceeds.
+    train_dataset = StreamingImageNetSubsetDataset(
+        dataset_name="imagenet-1k",
+        target_classes=target_classes,
+        num_samples=args.train_samples,
+        cache_root="/workspace/Data/datasets/",
+        split="train",
+        image_size=227,
+        is_training=True,
+    )
+    validation_dataset = StreamingImageNetSubsetDataset(
+        dataset_name="imagenet-1k",
+        target_classes=target_classes,
+        num_samples=args.val_samples,
+        cache_root="/workspace/Data/datasets/",
+        split="validation",
+        image_size=227,
+        is_training=False,
+    )
 
     if not (checkpoint_path and os.path.exists(checkpoint_path)):
         print("Initializing model...")
@@ -65,8 +69,9 @@ if __name__ == "__main__":
         lightning_model = model.AlexNetLightning(num_classes=args.num_classes, target_classes=target_classes)
     print(args)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler, num_workers=8, pin_memory=True, drop_last=True)
-    val_loader = DataLoader(validation_dataset, batch_size=args.batch_size, sampler=val_sampler, num_workers=2, pin_memory=True, drop_last=True)
+    # IterableDataset: no shuffle=/sampler= (dataset already shuffles internally)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=8, pin_memory=True, drop_last=True)
+    val_loader = DataLoader(validation_dataset, batch_size=args.batch_size, num_workers=2, pin_memory=True, drop_last=True)
     
     print("\nModel and dataset ready for training!")
 

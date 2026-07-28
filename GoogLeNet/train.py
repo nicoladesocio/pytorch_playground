@@ -2,9 +2,8 @@ import argparse
 import os
 
 import model
-from utils.datasets_utils import load_dataset_subset, create_subset_sampler
 from utils.model_utils import get_latest_checkpoint
-from custum_datasets.imagenet_subset_dataset import ImageNetSubsetDataset
+from custum_datasets.streaming_imagenet_dataset import StreamingImageNetSubsetDataset, pick_target_classes
 from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint, StochasticWeightAveraging
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -39,28 +38,39 @@ if __name__ == "__main__":
             print("--resume was set, but no checkpoint was found. Starting from scratch.")
             checkpoint_path = None
 
-    # Load the dataset
-    # Overfit test: use only 10 samples for train and val
-    train_dataset, validation_dataset = load_dataset_subset(
-            dataset_name="imagenet-1k",
-            cache_root="/workspace/Data/datasets/",
-            train_samples=args.train_samples,
-            val_samples=args.val_samples
-        )
-
-    train_sampler, target_classes = create_subset_sampler(train_dataset, max_num_classes=args.num_classes, target_classes=target_classes)
+    # Streaming datasets: no blocking pre-download. Cached images (from a
+    # previous run) are read straight off disk; anything else is pulled from
+    # the live HF stream and cached in the background as training proceeds.
+    if target_classes is None:
+        target_classes = pick_target_classes("imagenet-1k", args.num_classes)
     target_classes = sorted(target_classes)
-    val_sampler, _ = create_subset_sampler(validation_dataset, max_num_classes=args.num_classes, target_classes=target_classes)
 
-    train_dataset = ImageNetSubsetDataset(train_dataset, image_size=227, is_training=True, target_classes=target_classes)
-    validation_dataset = ImageNetSubsetDataset(validation_dataset, image_size=227, is_training=False, target_classes=target_classes)
+    train_dataset = StreamingImageNetSubsetDataset(
+        dataset_name="imagenet-1k",
+        target_classes=target_classes,
+        num_samples=args.train_samples,
+        cache_root="/workspace/Data/datasets/",
+        split="train",
+        image_size=227,
+        is_training=True,
+    )
+    validation_dataset = StreamingImageNetSubsetDataset(
+        dataset_name="imagenet-1k",
+        target_classes=target_classes,
+        num_samples=args.val_samples,
+        cache_root="/workspace/Data/datasets/",
+        split="validation",
+        image_size=227,
+        is_training=False,
+    )
 
     # Fresh run: instantiate after target_classes are finalized so they are checkpointed.
     if lightning_model is None:
         lightning_model = model.GoogLeNetLightning(num_classes=args.num_classes, target_classes=target_classes)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler, shuffle=False, num_workers=8, pin_memory=True, drop_last=True)
-    val_loader = DataLoader(validation_dataset, batch_size=args.batch_size, sampler=val_sampler, shuffle=False, num_workers=2, pin_memory=True, drop_last=True)
+    # IterableDataset: no shuffle=/sampler= (dataset already shuffles internally)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=8, pin_memory=True, drop_last=True)
+    val_loader = DataLoader(validation_dataset, batch_size=args.batch_size, num_workers=2, pin_memory=True, drop_last=True)
     
     print("\nModel and dataset ready for training!")
 
