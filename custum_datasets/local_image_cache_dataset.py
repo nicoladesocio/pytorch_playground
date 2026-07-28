@@ -11,14 +11,22 @@ instead of keeping the whole cache in RAM:
   `hash -> (shard_file, row_idx)`. This is loaded once at startup and gives
   us, cheaply: `__len__` (row count, no need to touch data shards) and an
   in-memory dedup check for `.add()` (skip images already cached).
-- `__getitem__` looks up which shard a row lives in and lazily loads just
-  that shard (kept in a small LRU cache of `max_cached_shards` shards) -
-  the full cache is never loaded into memory at once.
+- `__getitem__` looks up which shard a row lives in and reads it via
+  memory-mapped Arrow (`feather.read_table(..., memory_map=True)`): the OS
+  lazily pages in only the bytes actually touched, instead of us eagerly
+  loading whole shards into RAM. This also means the underlying pages are
+  shared (via the OS page cache) across DataLoader worker *processes* that
+  happen to mmap the same shard file - no custom cross-process cache needed.
+- A background thread (`request_prefetch`/`iter_cached`) warms upcoming
+  shards' mmap pages a couple of shards ahead of consumption, hiding the
+  cold-first-touch page-fault latency behind whatever the training loop is
+  doing with the current shard.
 
-Important: because only ~1-2 shards are ever resident in memory, callers
-should iterate in *shard-grouped* order (see `shuffled_indices()`) rather
-than fully-randomizing the global index space - a global shuffle would
-thrash the shard cache, reloading a shard from disk on nearly every access.
+Important: because random access still means one page fault per touched
+page, callers should iterate in *shard-grouped* order (see `iter_cached()`)
+rather than fully-randomizing the global index space - interleaving reads
+across many shards would defeat prefetching and cause more scattered,
+smaller reads than necessary.
 
 Also owns the *write* side: `.add(label, image_bytes)` lets a caller (e.g.
 StreamingImageNetSubsetDataset) persist newly-seen images into the cache.
@@ -49,20 +57,23 @@ HASHES_FILENAME = "arrow_hashes.arrow"
 
 class LocalImageCacheDataset(Dataset):
     """Read (and write) images cached as Arrow shards under
-    `cache_dir/<label>/*.arrow`, with lazy per-shard loading."""
+    `cache_dir/<label>/*.arrow`, with memory-mapped, prefetched shard
+    loading."""
 
-    def __init__(self, cache_dir, target_classes, transform, flush_every=256, max_cached_shards=2):
+    def __init__(self, cache_dir, target_classes, transform, flush_every=256, prefetch_lookahead=2):
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
         self.target_classes = list(target_classes)
         self.class_to_idx = {cls: idx for idx, cls in enumerate(self.target_classes)}
         self.transform = transform
         self.flush_every = flush_every
-        self.max_cached_shards = max_cached_shards
+        self.prefetch_lookahead = prefetch_lookahead
 
-        # LRU cache of loaded shard tables, keyed by (label, shard_file).
-        self._shard_cache = {}
-        self._shard_cache_order = []
+        # Memory-mapped shard tables, keyed by (label, shard_file). No
+        # eviction needed: mmap only reserves address space up front, actual
+        # physical pages are faulted in (and can be reclaimed by the OS
+        # under memory pressure) lazily, per access.
+        self._shard_tables = {}
 
         # entries[i] = (label, shard_file, row_idx); built from each label's
         # arrow_hashes.arrow file (also populates self._known_hashes).
@@ -77,6 +88,12 @@ class LocalImageCacheDataset(Dataset):
         self._write_queue = queue.Queue(maxsize=256)
         self._write_thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._write_thread.start()
+
+        # Background thread that warms (memory-maps + touches) shards ahead
+        # of when iter_cached() will actually need them.
+        self._prefetch_queue = queue.Queue(maxsize=prefetch_lookahead + 1)
+        self._prefetch_thread = threading.Thread(target=self._prefetch_loop, daemon=True)
+        self._prefetch_thread.start()
 
     def _scan(self):
         """Load each label's arrow_hashes.arrow file (small: hash + shard
@@ -109,42 +126,76 @@ class LocalImageCacheDataset(Dataset):
         image_bytes = self._read_from_shard(label, shard_file, row_idx)
         return self.decode(image_bytes, label)
 
-    def _read_from_shard(self, label, shard_file, row_idx):
-        key = (label, shard_file)
-        table = self._shard_cache.get(key)
+    def _load_shard(self, key):
+        """Return the memory-mapped Arrow table for shard `key` (label,
+        shard_file), mapping it (cheap: no data copy) on first access."""
+        table = self._shard_tables.get(key)
         if table is None:
+            label, shard_file = key
             shard_path = os.path.join(self.cache_dir, str(label), shard_file)
-            table = feather.read_table(shard_path)
-            self._shard_cache[key] = table
-            self._shard_cache_order.append(key)
-            if len(self._shard_cache_order) > self.max_cached_shards:
-                oldest = self._shard_cache_order.pop(0)
-                self._shard_cache.pop(oldest, None)
+            table = feather.read_table(shard_path, memory_map=True)
+            self._shard_tables[key] = table
+        return table
+
+    def _read_from_shard(self, label, shard_file, row_idx):
+        table = self._load_shard((label, shard_file))
         return table.column("image")[row_idx].as_py()
 
-    def shuffled_indices(self, seed, worker_id=0, num_workers=1):
-        """Return an index ordering suitable for sequential access: whole
-        shards are assigned to a single worker (never split across workers),
-        shard visit order is shuffled, and rows within each shard are
-        shuffled - but two different shards' rows are never interleaved.
-        This keeps the shard LRU cache effective (at most 1-2 shards loaded
-        at once) instead of thrashing under a fully global shuffle.
+    def request_prefetch(self, key):
+        """Hint that shard `key` (label, shard_file) will be needed soon; a
+        background thread will memory-map it (and touch a row to fault in
+        its pages) ahead of time. Non-blocking/best-effort."""
+        try:
+            self._prefetch_queue.put_nowait(key)
+        except queue.Full:
+            pass
+
+    def _prefetch_loop(self):
+        while True:
+            key = self._prefetch_queue.get()
+            try:
+                table = self._load_shard(key)
+                if table.num_rows:
+                    # Touch a row so the kernel actually faults in the pages
+                    # now, rather than only reserving the mapping.
+                    table.column("image")[0].as_py()
+            except OSError:
+                pass
+            finally:
+                self._prefetch_queue.task_done()
+
+    def iter_cached(self, seed, worker_id=0, num_workers=1):
+        """Yield (tensor, label_idx) pairs from the cache in shard-grouped
+        shuffled order: whole shards are assigned to this worker (never
+        split across workers), shard visit order and within-shard order are
+        shuffled, but two different shards' rows are never interleaved.
+        While consuming shard i, requests background prefetching of shard
+        i + prefetch_lookahead so its mmap pages are already warm by the
+        time we reach it.
         """
         groups = {}
-        for i, (label, shard_file, _row_idx) in enumerate(self.entries):
-            groups.setdefault((label, shard_file), []).append(i)
+        for label, shard_file, row_idx in self.entries:
+            groups.setdefault((label, shard_file), []).append(row_idx)
 
         rng = random.Random(seed)
         group_keys = list(groups.keys())
         rng.shuffle(group_keys)
         my_group_keys = group_keys[worker_id::num_workers] if num_workers > 1 else group_keys
 
-        ordered = []
-        for key in my_group_keys:
-            idxs = groups[key]
-            rng.shuffle(idxs)
-            ordered.extend(idxs)
-        return ordered
+        for i in range(min(self.prefetch_lookahead, len(my_group_keys))):
+            self.request_prefetch(my_group_keys[i])
+
+        for i, key in enumerate(my_group_keys):
+            ahead_idx = i + self.prefetch_lookahead
+            if ahead_idx < len(my_group_keys):
+                self.request_prefetch(my_group_keys[ahead_idx])
+
+            label, shard_file = key
+            row_idxs = list(groups[key])
+            rng.shuffle(row_idxs)
+            for row_idx in row_idxs:
+                image_bytes = self._read_from_shard(label, shard_file, row_idx)
+                yield self.decode(image_bytes, label)
 
     def decode(self, image_bytes, label):
         """Turn raw jpeg bytes + original label id into a (tensor, idx) pair,

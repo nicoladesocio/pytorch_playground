@@ -118,13 +118,12 @@ class StreamingImageNetSubsetDataset(IterableDataset):
 
         # Shard-grouped order: whole shards go to this worker, shard order
         # and within-shard order are shuffled, but different shards' rows
-        # are never interleaved - keeps LocalImageCacheDataset's shard LRU
-        # cache effective instead of thrashing under a fully global shuffle.
-        cached_indices = cache_dataset.shuffled_indices(epoch_seed, worker_id, num_workers)
-        for idx in cached_indices:
+        # are never interleaved - keeps mmap access patterns sequential
+        # within a shard and lets the background prefetch thread stay ahead.
+        for tensor, label_idx in cache_dataset.iter_cached(epoch_seed, worker_id, num_workers):
             if count >= target_count:
                 break
-            yield cache_dataset[idx]
+            yield tensor, label_idx
             count += 1
 
         try:
