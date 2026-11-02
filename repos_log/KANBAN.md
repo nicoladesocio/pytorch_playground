@@ -18,7 +18,12 @@
 
 | ID | Card | Owner | Handoff |
 |---|---|---|---|
-| — | *nothing in flight* | | |
+| `P2-11` | AlexNet convergence — overfit-one-batch **passes** (2.554 → 1.189), but 18 epochs of SGD `lr=0.01` on the 4096-sample subset left `val_acc` pinned at 8.330 (chance for K=10). Needs a longer/warmer schedule or a GPU run, and the augmentation question below resolved. | agent/data-unblock-and-convergence | [003](./handoffs/HANDOFF_003.md) |
+| `P1-8` | Canonical 51200/2048 subset. **Parquet download + `save_to_disk` now proven to work end-to-end** — the `seed=1337` subset built in 759 s and is fully verified (stats in HANDOFF_003 §6.1). **Not finished:** `train_final.py` bakes `"seed": 42`, which is a *different* cache key (`..._c58e22ff2538`), and that build was stopped at 534 MB when this session was closed. Next agent: run `python probes/check_big.py` (now pinned to `SEED = 42`) once — ~13 min, resumable — then `train_final.py` loads it offline. Also consider the `save_to_disk` memory fix below. | agent/data-unblock-and-convergence | [003](./handoffs/HANDOFF_003.md) |
+| `P2-15` | `ImageNetSubsetDataset` hardcodes `Resize(256)` before `RandomCrop(image_size)`. Both the train and eval transform arms **failed to memorise 89 real images in 80 steps** while synthetic noise memorised fine — the top open convergence suspect. | agent/data-unblock-and-convergence | [003](./handoffs/HANDOFF_003.md) |
+| `P2-18` | Label/image alignment through the *real* sampler is unverified. `probes/check_labels2.py` is **written but has never been executed** — the code exists, the evidence does not. *Acceptance:* probe run and its output in a handoff; mismatch count is zero. | agent/data-unblock-and-convergence | [003](./handoffs/HANDOFF_003.md) |
+| `P3-11` | Parquet resume correctness unverified. `probes/check_resume.py` (kill after 90 s, then compare label/path fingerprints against an uninterrupted reference) is **written but has never been executed**. *Acceptance:* resumed subset is byte-identical in labels/paths to the uninterrupted one. | agent/data-unblock-and-convergence | [003](./handoffs/HANDOFF_003.md) |
+| `P3-13` | `train_final.py` `CONFIG` values are informed defaults, **not measured**. Both `--smoke` runs completed (exit 0, `RESULT` blocks in §6.8) but landed exactly on chance, so nothing in `CONFIG` has been validated by a run that beat chance. *Acceptance:* `CONFIG` numbers match a completed GPU run that beat chance; handoff records the measured run. | agent/data-unblock-and-convergence | [003](./handoffs/HANDOFF_003.md) |
 
 ---
 
@@ -26,7 +31,10 @@
 
 | ID | Card | Blocked on | Owner |
 |---|---|---|---|
-| `P2-11` | AlexNet convergence (vanishing gradient, loss stuck at 6.9) | Needs `P1-1`,`P1-2`,`P1-4`,`P2-1` done. ~~CUDA box~~ **CPU is viable** (verified HANDOFF_002) — start with the overfit-one-batch experiment | — |
+| — | *nothing waiting* | | |
+
+> `P2-11` (AlexNet convergence) moved to 🔥 IN PROGRESS in HANDOFF_003 — every blocker
+> listed for it (`P1-1`, `P1-2`, `P1-4`, `P2-1`) is now DONE.
 
 > `trainer_v2/`'s fate is tracked once, as `P3-6` in the P3 list below (blocked on a product
 > decision from the repo owner). It was previously duplicated here.
@@ -42,6 +50,27 @@
 | `P0-3` | Create this shared kanban | HANDOFF_001 | [001](./handoffs/HANDOFF_001.md) |
 | `P0-4` | Write `AGENT_INSTRUCTIONS.md` — reading order, PR-as-deliverable contract, Docker/CPU runbook | HANDOFF_002 | [002](./handoffs/HANDOFF_002.md) |
 | `P0-5` | Verify the Docker environment: image runs, deps installable, **both models complete `Trainer.fit()` on CPU**, GPU confirmed unusable | HANDOFF_002 | [002](./handoffs/HANDOFF_002.md) |
+| `P1-1` | `AlexNet/train.py` `Trainer` block moved inside `__main__`; module is now import-safe (`build_arg_parser()` / `main(argv)` split) | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P1-2` | Lightning imports standardised to `import lightning as pl`; `GoogLeNet` intra-package imports made package-qualified so `import GoogLeNet.model` works from the repo root | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P1-4` | Portable paths via `utils/runtime.py` (`repo_root()` / `default_path()`); no `/workspace` defaults remain; honours `PYTORCH_PLAYGROUND_ROOT` | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P1-6` | `Data/datasets/.gitkeep` committed (`.gitignore` negation verified to admit it) | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P1-7` | `trainer` added to `pyproject.toml` wheel `packages` | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-1` | Per-batch `print()` removed from train/val steps; NaN/range violations became logged metrics | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-2` | Seeding: `seed_everything(seed)` in both train scripts, seeded class selection, `--seed` flag | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-3` | `--max_epochs`, `--lr`, `--optimizer`, `--scheduler` are real CLI args; `trainer train <M> --set max_epochs=5` works | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-4` | Single source of truth for class count — sampler, dataset remap and model head all consume the same `target_classes` | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-5` | Explicit `--resume` on both nets; fresh runs unaffected. **Extra bug found + fixed while verifying:** `on_load_checkpoint` rejected any checkpoint whose `target_classes` was `None`, which made a checkpoint written by the *current* code unresumable. Now only a genuinely pre-remapping checkpoint (key absent) is rejected. Round-trip verified: epoch, optimizer momentum and scheduler all restored | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-6` | `utils/model_utils.py` is model-agnostic: `filename`/`model_prefix` are required args, no AlexNet strings remain, `torch.load(weights_only=True)` | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-7` | Aux weight configurable; `InceptionOutClassifier` Linear init uses `fan_in`; aux and main losses logged separately | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-10` | Epoch size explicit and logged (`--train_samples_per_epoch`); val loader never `drop_last`; warns when in-class count < `batch_size` | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P2-13` | AlexNet flatten size derived from its own conv stack (`_flatten_features()`); bad size raises a clear message | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+| `P3-5` | `registry.json` stores paths **relative to `PROJECT_ROOT`**; legacy absolute entries still readable via `_abs_from_root()`. Verified: re-registering both nets yields relative paths and `trainer train --dry-run` resolves them in-container | HANDOFF_003 | [003](./handoffs/HANDOFF_003.md) |
+
+> Evidence for the `P1-*` / `P2-*` / `P3-5` rows above: `HANDOFF_003` §6 plus the
+> acceptance probes (`12/12` kanban-claim checks, checkpoint-helper checks, resume
+> round-trip). The data-path unblock itself — `ILSVRC/imagenet-1k` as the correct Hub id,
+> the parquet row-group downloader, and the `PercentageAccuracy` fix — is the substance
+> of HANDOFF_003.
 
 ---
 
@@ -106,3 +135,14 @@
 - **`visualize_weights.py`**: AlexNet and GoogLeNet copies duplicate ~80 % of each other; unify into `utils/`.
 - **GPU strategy for this host**: ✅ resolved in HANDOFF_002 — CPU-only is the supported
   experiment path; see [AGENT_INSTRUCTIONS.md §4](./AGENT_INSTRUCTIONS.md).
+
+### Added by HANDOFF_003
+
+| ID | Priority | Card | Acceptance criteria |
+|---|---|---|---|
+| `P2-14` | **P2** | Neither network has ever beaten chance. AlexNet: 18 epochs, SGD `lr=0.01`, 4096-sample subset → `val_acc` pinned at 8.330 with `train_loss_epoch` 2.660 → 2.430. Needs a GPU run, a longer/warmer schedule, or the `P2-15` augmentation issue fixed first. | `val_acc` clearly above `100/num_classes`% on a real run, with the log excerpt in a handoff. |
+| `P2-16` | **P2** | GoogLeNet aux heads spatially collapse below ~128 px: `InceptionOutClassifier`'s `AvgPool2d(kernel_size=5, stride=3)` yields `feature_map_size` 1/2/2/4 at 96/128/160/224 px. At 1 the aux branch is crippled, so any small-image probe of aux behaviour is invalid. | Construction raises (or warns loudly) when `image_size` makes the aux feature map < 2; probes documented to use ≥160 px. |
+| `P2-17` | **P2** | Convergence assertions must use `1.6·ln(K)` for GoogLeNet's combined loss (`main + 0.3·aux1 + 0.3·aux2`), not `ln(K)`. Comparing the combined loss to `ln(K)` mislabels a healthy network as broken — this cost real debugging time in HANDOFF_003. | A shared helper returns the chance threshold per network; every probe/test uses it. |
+| `P3-14` | **P3** | Drop the `save_to_disk` round-trip from the cache. `Dataset.from_parquet(parts).save_to_disk(...)` is the only memory-heavy step in the data path: at 51200 samples it was OOM-killed at 2/12 shards inside the 8.25 GB container cap, and only completed on a re-run. The parquet part files are already a perfectly good on-disk format — let the cache *be* the parts and load lazily with `Dataset.from_parquet` at train time. | `load_dataset_subset` never calls `save_to_disk`; peak RSS for a 51200-sample build is well under the container cap; existing caches still load or are cleanly rebuilt. |
+| `P3-12` | **P3** | Decide the fate of `--shuffle_buffer` now that the parquet path ignores it (row groups are already globally shuffled). Currently dead weight except on the streaming fallback — **and actively harmful**: `shuffle_buffer_size` is part of the cache `expected_metadata` comparison but *not* of `_cache_key`, so changing `--shuffle_buffer` re-downloads a byte-identical subset ("Cache metadata mismatch, re-downloading..."). **Partially fixed in HANDOFF_003**: it is now excluded from the identity comparison via `identity_keys`, so it can no longer invalidate the cache. What remains is the *decision* — document as streaming-fallback-only, or remove. | Either documented as streaming-fallback-only, or removed; decision recorded in a handoff. |
+

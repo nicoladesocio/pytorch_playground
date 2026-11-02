@@ -83,8 +83,18 @@ class ImageNetSubsetDataset(TorchDataset):
 
     def __getitem__(self, idx):
         item = self.hf_dataset[idx]
-        # Ensure image is in RGB
-        image = item["image"].convert("RGB")
+        # The cache stores images with Image(decode=False) so that the one-off
+        # download does not pay for a decode/re-encode round trip. Such a column
+        # yields {'bytes': ..., 'path': ...} instead of a PIL image, so accept both.
+        raw = item["image"]
+        if isinstance(raw, dict) or isinstance(raw, (bytes, bytearray)):
+            payload = raw["bytes"] if isinstance(raw, dict) else raw
+            from PIL import Image as PILImage
+            import io
+            image = PILImage.open(io.BytesIO(payload))
+        else:
+            image = raw
+        image = image.convert("RGB")
         label = item.get("label", item.get("labels"))
 
         # Remap label to contiguous index if a mapping is provided

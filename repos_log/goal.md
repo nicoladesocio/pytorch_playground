@@ -29,6 +29,9 @@ clean reference implementations of the papers — not state-of-the-art accuracy.
 - `custum_datasets/` — dataset wrappers (note: folder name is misspelled; renaming is tracked
   on the kanban, not done silently).
 - Making training runs reproducible: seeds, recorded configs, recorded metrics.
+- **One parameterless "final" script per network** (`AlexNet/train_final.py`,
+  `GoogLeNet/train_final.py`) with every best-known hyperparameter baked in — see
+  *Deliverable: parameterless final scripts* below.
 
 **Out of scope (unless explicitly promoted on the kanban)**
 
@@ -38,6 +41,33 @@ clean reference implementations of the papers — not state-of-the-art accuracy.
 - Full ImageNet (1.2M images). We train on a reproducible subset (default 51 200 train /
   2 048 val, 64 classes).
 - Distributed / multi-GPU training.
+
+## Training size policy (explicit user requirement)
+
+**Trainings must stay small.** They have to be runnable on a PC with a *bigger* GPU than the
+dev box, and the whole point of the playground is that a run finishes in a reasonable time.
+Concretely:
+
+- Never default to full ImageNet. The canonical subset is 51 200 train / 2 048 val samples
+  over 64 classes (`utils/datasets_utils.DEFAULT_*`).
+- Anything used for *validation by an agent* must be a smoke run: a few hundred to a few
+  thousand samples, 1–3 epochs, CPU-friendly.
+- Long/full runs are the human's job, on the bigger GPU, via the final scripts.
+
+## Deliverable: parameterless final scripts (explicit user requirement)
+
+When a network is considered ready, the agent authors **one script per neural network** that
+takes **no parameters at all** and has every best hyperparameter baked into it. The human
+then runs exactly that script to do the real training.
+
+- `python AlexNet/train_final.py` and `python GoogLeNet/train_final.py` — no arguments
+  required, no editing needed.
+- Each script holds a single `CONFIG` dict that is the *recorded best* configuration, and it
+  delegates to the same `main()` as `train.py` so there is exactly one training engine.
+- `--smoke` is the only accepted argument: a CPU-sized variant used by agents/CI to prove the
+  pipeline works. It is *not* the deliverable and must never be what the human runs.
+- The baked-in values must be justified by a log excerpt in a handoff. A number in a final
+  script that was never measured is a bug.
 
 ## Definition of done
 
@@ -53,6 +83,8 @@ A model is considered **trained** when all of the following hold:
    resolved config, and a metrics summary.
 5. No per-batch `print()` spam; observability comes from Lightning loggers.
 6. A short run (smoke) and a real run both complete without OOM on the target hardware.
+7. `python <Model>/train_final.py` exists, takes no arguments, and reproduces the metrics
+   recorded in the handoff that justified its `CONFIG`.
 
 ## Current status (as of HANDOFF_002)
 
@@ -102,6 +134,15 @@ evidence. See [KANBAN.md](./KANBAN.md) for the prioritised work.
   modern PyTorch wheels.
 - **CPU works.** Both `AlexNetLightning` and `GoogLeNetLightning` complete a real
   `Trainer.fit()` on CPU. Use small `--train_samples` / `--batch_size` / `max_epochs`.
+- **`--shm-size` matters.** Docker's default `/dev/shm` is 64 MB; a multi-worker DataLoader
+  carrying image batches exhausts it and dies with
+  `unable to allocate shared memory ... No space left on device`. Always start the container
+  with `--shm-size=4g`. `utils.runtime.count_available_workers` clamps `num_workers` to what
+  shm can actually support, so the failure degrades to `num_workers=0` instead of crashing.
+- **Memory cap matters.** The default Docker Desktop limit (8 GB) is not enough for
+  streaming-based dataset downloads; the process is OOM-killed. The parquet row-group path in
+  `utils/datasets_utils.py` needs only ~0.5 GB, so this is no longer a blocker, but raising
+  the limit still helps.
 - `pyproject.toml` is **not** the GPU problem — it declares plain `torch`/`torchvision` and
   pip resolves a working build per machine. The blocker is the host driver.
 - All default paths are still container-only (`/workspace/...`), so nothing runs on the host

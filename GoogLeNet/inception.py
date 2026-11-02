@@ -48,31 +48,48 @@ class Inception(torch.nn.Module):
         return torch.cat([branch1x1, branch3x3, branch5x5, branch_pool], 1)
 
 class InceptionOutClassifier(torch.nn.Module):
-    def __init__(self, in_channels, num_classes):
+    def __init__(self, in_channels, num_classes, in_spatial=None, sample_size=227):
         super().__init__()
-        # Explicit Kaiming initialization for all Conv2d and Linear layers
-        # (done after module construction)
+        if in_spatial is None:
+            # Derive the post-pool spatial size from the real stack instead of
+            # hardcoding 4x4, which silently required a 227px input.
+            with torch.no_grad():
+                dummy = torch.zeros(1, in_channels, sample_size, sample_size)
+                out = torch.nn.AvgPool2d(kernel_size=5, stride=3)(dummy)
+            in_spatial = int(out.shape[-1])
+        self.in_spatial = in_spatial
+        with torch.no_grad():
+            dummy = torch.zeros(1, in_channels, in_spatial, in_spatial)
+            out = torch.nn.Sequential(
+                torch.nn.AvgPool2d(kernel_size=5, stride=3),
+                torch.nn.Conv2d(in_channels, 128, kernel_size=1),
+            )(dummy)
+        feature_map_size = int(out.shape[-1])
+        self.feature_map_size = feature_map_size
         self.features = torch.nn.Sequential(
-            torch.nn.AvgPool2d(kernel_size=5, stride=3), # output 4x4
+            torch.nn.AvgPool2d(kernel_size=5, stride=3), # output feature_map_size x feature_map_size
             torch.nn.Conv2d(in_channels, 128, kernel_size=1),
             torch.nn.Flatten()
         )
         self.classifier = torch.nn.Sequential(
-            torch.nn.Linear(128 * 4 * 4, 1024),
+            torch.nn.Linear(128 * feature_map_size * feature_map_size, 1024),
             torch.nn.ReLU(inplace=True),
             torch.nn.Dropout(0.2),
             torch.nn.Linear(1024, num_classes),
             #torch.nn.Softmax(dim=1)
         )
 
-        # Explicit Kaiming initialization for all Conv2d and Linear layers
+        # Kaiming for convs, but Xavier/Glorot for the Linears: kaiming_normal_ with
+        # mode='fan_out' is derived from the conv receptive field and gives Linear
+        # weights a variance that is wrong for a fully connected layer, which made the
+        # auxiliary heads dominate/destabilise the early loss.
         for m in self.modules():
             if isinstance(m, torch.nn.Conv2d):
                 torch.nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     torch.nn.init.constant_(m.bias, 0)
             elif isinstance(m, torch.nn.Linear):
-                torch.nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                torch.nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     torch.nn.init.constant_(m.bias, 0)
 
