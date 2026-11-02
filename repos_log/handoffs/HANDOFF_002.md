@@ -209,28 +209,39 @@ IDs.
 that carve-out is now removed from `goal.md` ground rule 7 and explicitly disavowed in
 `AGENT_INSTRUCTIONS.md` §2.1.
 
-**I could not open the PR myself.** I tried four routes and all failed for lack of credentials:
+**I could not open the PR myself — at the time.** I tried four routes and all failed for lack
+of credentials:
 
 | Route | Result |
 | --- | --- |
 | `gh` CLI | not installed |
-| GitKraken CLI (`gk`) MCP `pull_request_create` | `The prompt was cancelled or did not authorize the action` — run `gk auth login` to fix |
+| GitKraken CLI (`gk`) MCP `pull_request_create` | `The prompt was cancelled or did not authorize the action` — fixed by the owner signing in |
 | Browser → GitHub compare view | served the diff but the session is **signed out** ("Sign in" in the header) |
 | HTTPS `git push` | rejected (`credential.helper = manager-core`, non-interactive) |
 
-Only **SSH** authenticates (as `nicoladesocio`), so I pushed the branch over a temporary
-`origin-ssh` remote and removed it afterwards. The PR therefore needs one manual click:
+Only **SSH** authenticated (as `nicoladesocio`), so I pushed the branch over a temporary
+`origin-ssh` remote and removed it afterwards.
 
-<https://github.com/nicoladesocio/pytorch_playground/compare/main...agent/handoff-002-env-and-instructions?expand=1>
+### Resolution (same session, after the owner signed in to GitKraken)
 
-The title and body to paste are below. **Do not merge it yourself if you are an agent** —
-merging is the human's step (`AGENT_INSTRUCTIONS.md` §2).
+The blocker was **not** permanent — it was simply an unauthenticated GitKraken CLI. Once the
+owner signed in, `pull_request_create` worked end-to-end. **PR #1 was opened and merged**
+(`152c01b`, merged 2026-11-02T16:56:10Z), and **PR #2** was created by that same tool to
+record the working route in `AGENT_INSTRUCTIONS.md` §6.
 
-> If a future agent installs and authenticates `gh`, `gh pr create` becomes the one-line
-> replacement for this whole section. That is worth doing once and would remove this friction
-> permanently.
+So the correct instruction for future agents is: **use the GitKraken MCP
+`pull_request_create` tool** — see `AGENT_INSTRUCTIONS.md` §6 for the exact parameters and the
+dead ends to skip. Do not re-run this investigation.
 
-## PR to open
+> **Amendment note:** this section originally ended with "the PR therefore needs one manual
+> click" and a `compare/` URL. That was accurate when written and is superseded by the
+> paragraph above. I am the author of this handoff and the correction is to the *latest*
+> handoff, so it does not violate the "never edit an older handoff" rule.
+
+## PR to open — **DONE: PR #1, merged**
+
+<https://github.com/nicoladesocio/pytorch_playground/pull/1> — opened and merged by the owner
+as `152c01b`. Content, for the record:
 
 - **Branch:** `agent/handoff-002-env-and-instructions` → `main`
 - **Title:** `P0-4/P0-5: Add agent instructions, PR workflow contract, verified Docker/CPU runbook`
@@ -242,6 +253,10 @@ merging is the human's step (`AGENT_INSTRUCTIONS.md` §2).
   - Adds `P1-7` (`trainer/` missing from wheel), `P2-12` (Dockerfile ≠ image in use), `P2-13` (AlexNet `256*6*6` latent shape bug).
   - Removes duplicate `P3-6`.
   - Docs-only; no production code changed.
+
+**Follow-up: PR #2** <https://github.com/nicoladesocio/pytorch_playground/pull/2> —
+`agent/pr-creation-unblocked` → `main`, created via the now-working `pull_request_create` tool.
+Corrects §6 of this file and of `AGENT_INSTRUCTIONS.md` to record the working PR-creation path.
 
 ---
 
