@@ -192,22 +192,35 @@ host driver.
 
 Read this before you waste time on auth.
 
-- **HTTPS push fails** — `Password authentication is not supported`.
+- **HTTPS `git push` fails** — `Password authentication is not supported`.
 - **SSH works** — `ssh -T git@github.com` → `Hi nicoladesocio!`.
-  If `origin` is HTTPS, add a temporary remote:
+  `origin` is HTTPS, so add a temporary remote to push:
   ```bash
   git remote add origin-ssh git@github.com:nicoladesocio/pytorch_playground.git
-  git push -u origin-ssh <branch>
+  git fetch origin-ssh <branch>          # needed before --force-with-lease
+  git push --force-with-lease origin-ssh <branch>
   git remote remove origin-ssh
   ```
-- **`gh` is not installed**, GitKraken's `gk` CLI is not signed in, there is no
-  `GITHUB_TOKEN`/`GH_TOKEN`, and the integrated browser is **signed out of GitHub**. So
-  **opening the PR programmatically is not possible on this host right now.**
-  In that case: push the branch, and put the exact PR title/body *and* the
-  `https://github.com/<owner>/<repo>/compare/main...<branch>?expand=1` URL in your handoff
-  under `## PR to open` so the human can open it in one click. **Still do not merge to `main`.**
-  - To lift this permanently: `gk auth login`, or install `gh` and `gh auth login`. Then
-    `gh pr create` replaces the manual step.
+  A plain `--force-with-lease` without the preceding `fetch` fails with
+  `! [rejected] ... (stale info)`, because the lease has no local remote-tracking ref to
+  compare against.
+- **Opening PRs: use the GitKraken MCP tool `pull_request_create`** with
+  `provider: github`, `repository_name: pytorch_playground`,
+  `repository_organization: nicoladesocio`. The GitKraken CLI is **signed in** on this host,
+  so this works end-to-end. Verify a known PR with `pull_request_get_detail`.
+- **Do not re-diagnose auth from scratch.** These routes are dead ends on this host — skip
+  them:
+  - `gh` CLI — not installed.
+  - `git credential fill` — `fatal: Cannot prompt because user interactivity has been disabled`.
+  - `gk auth login` — needs an interactive browser plus a pasted token; fails in a
+    non-interactive shell with `stdin is closed and this prompt cannot be skipped`.
+  - Integrated browser → GitHub — signed out; the compare view renders but has no session.
+  - If `pull_request_create` reports `provider name is required`, you omitted `provider`.
+    If it reports `did not authorize the action`, the GitKraken session expired — ask the
+    human to sign in again rather than trying to script the login.
+- **If PR creation genuinely fails**, push the branch and record the exact title, body, and
+  `compare/main...<branch>?expand=1` URL in your handoff under `## PR to open`. **Still do
+  not merge to `main` yourself.**
 
 The repo root is **nested**: `pytorch_playground/pytorch_playground`. The outer folder is only
 a container. `git` commands must run in the inner one.
