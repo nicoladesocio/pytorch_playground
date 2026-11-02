@@ -23,4 +23,4 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["AlexNet", "GoogLeNet", "utils", "custum_datasets", "trainer_v2"]
+packages = ["AlexNet", "GoogLeNet", "utils", "custum_datasets", "trainer", "trainer_v2"]

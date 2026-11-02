@@ -11,6 +11,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = Path(__file__).resolve().parent / "registry.json"
 
 
+def _rel_to_root(path: Path) -> str:
+    """Store a path relative to PROJECT_ROOT so the registry is portable.
+
+    Falls back to an absolute path only for a path outside the repository.
+    """
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def _abs_from_root(value: str) -> Path:
+    """Resolve a registry path that may be relative (new) or absolute (legacy)."""
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return (PROJECT_ROOT / path).resolve()
 
 
 def _read_registry() -> dict:
@@ -43,7 +61,28 @@ def _parse_set_values(items: list[str]) -> dict:
 def _resolve_model_dir(model_name: str, model_dir: str | None) -> Path:
     if model_dir:
         return Path(model_dir).resolve()
-    return (PROJECT_ROOT / model_name).resolve()
+    candidate = (PROJECT_ROOT / model_name)
+    if candidate.is_dir():
+        return candidate.resolve()
+    # The registry key is lowercase ("alexnet") while the folders are CamelCase
+    # ("AlexNet"). Path() does not care, so on a case-sensitive filesystem (any real
+    # Linux box) this silently produced a non-existent directory and the failure only
+    # surfaced later as "Train script not found". Match the sibling folder
+    # case-insensitively before giving up.
+    matches = [
+        entry for entry in PROJECT_ROOT.iterdir()
+        if entry.is_dir() and entry.name.lower() == model_name.lower()
+    ]
+    if len(matches) == 1:
+        return matches[0].resolve()
+    if len(matches) > 1:
+        names = ", ".join(sorted(m.name for m in matches))
+        raise ValueError(
+            f"Model name '{model_name}' matches multiple folders under {PROJECT_ROOT}: {names}. "
+            "Pass --model-dir to disambiguate."
+        )
+    # Nothing matched: keep the original path so the error message stays informative.
+    return candidate.resolve()
 
 
 def handle_register(args: argparse.Namespace) -> int:
@@ -67,8 +106,13 @@ def handle_register(args: argparse.Namespace) -> int:
 
     registry[args.model_name] = {
         "name": model_obj.name,
-        "model_dir": str(model_dir),
-        "module_file": str(module_file),
+        # Store paths *relative to PROJECT_ROOT*. An absolute path baked in inside
+        # the container (`/workspace/AlexNet`) is meaningless on the host
+        # (`D:\...\pytorch_playground\AlexNet`) and vice versa, and registry.json is
+        # gitignored so a fresh checkout could not even regenerate it in the right
+        # place. Relative paths make one registry portable across both.
+        "model_dir": _rel_to_root(model_dir),
+        "module_file": _rel_to_root(module_file),
         "class_name": model_class.__name__,
         "default_parameters": model_obj.get_default_parameters(),
         "train_script": model_obj.train_script,
@@ -87,14 +131,14 @@ def handle_train(args: argparse.Namespace, passthrough: list[str]) -> int:
     if args.model_name not in registry:
         raise KeyError(
             f"Model '{args.model_name}' is not registered. "
-            "Run: python trainer register --model-name <name>"
+            f"Run: python -m trainer register --model-name {args.model_name}"
         )
 
     record = registry[args.model_name]
-    module_file = Path(record["module_file"]).resolve()
+    module_file = _abs_from_root(record["module_file"])
     model_class = load_model_class(module_file, class_name=record["class_name"])
     model_obj: Model = model_class(
-        model_dir=Path(record["model_dir"]).resolve(),
+        model_dir=_abs_from_root(record["model_dir"]),
         project_root=PROJECT_ROOT,
     )
 
@@ -105,6 +149,19 @@ def handle_train(args: argparse.Namespace, passthrough: list[str]) -> int:
         "train_samples": args.train_samples,
         "val_samples": args.val_samples,
         "batch_size": args.batch_size,
+        # First-class flags for the knobs that decide whether a run converges and how
+        # long it takes. Everything else on train.py stays reachable via --set KEY=VALUE.
+        "dataset_name": args.dataset_name,
+        "cache_root": args.cache_root,
+        "log_path": args.log_path,
+        "image_size": args.image_size,
+        "max_epochs": args.max_epochs,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "precision": args.precision,
+        "accelerator": args.accelerator,
+        "num_workers": args.num_workers,
+        "seed": args.seed,
     }
     explicit_overrides = {k: v for k, v in explicit_overrides.items() if v is not None}
     set_overrides = _parse_set_values(args.set)
@@ -154,6 +211,20 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--train-samples", type=int, default=None)
     train_parser.add_argument("--val-samples", type=int, default=None)
     train_parser.add_argument("--batch-size", type=int, default=None)
+    train_parser.add_argument("--dataset-name", default=None,
+                              help="HuggingFace dataset id, e.g. ILSVRC/imagenet-1k (gated: needs HF_TOKEN)")
+    train_parser.add_argument("--cache-root", default=None,
+                              help="Directory where downloaded dataset subsets are cached")
+    train_parser.add_argument("--log-path", default=None, help="TensorBoard log root")
+    train_parser.add_argument("--image-size", type=int, default=None, help="Input resolution")
+    train_parser.add_argument("--max-epochs", type=int, default=None, help="Training length")
+    train_parser.add_argument("--lr", type=float, default=None, help="Initial learning rate")
+    train_parser.add_argument("--weight-decay", type=float, default=None, help="Weight decay")
+    train_parser.add_argument("--precision", default=None,
+                              help="Lightning precision: 32, 16-mixed, bf16-mixed")
+    train_parser.add_argument("--accelerator", default=None, choices=["auto", "cpu", "gpu"])
+    train_parser.add_argument("--num-workers", type=int, default=None, help="DataLoader workers")
+    train_parser.add_argument("--seed", type=int, default=None, help="Global RNG seed")
     train_parser.add_argument(
         "--set",
         action="append",

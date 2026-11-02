@@ -48,9 +48,6 @@ This is the collaboration contract with the human:
   command you would have run in your handoff, and leave the branch for the human.
   **Do not merge instead.**
 
-> ⚠️ `HANDOFF_001` merged directly to `main`. That was a mistake and is **not** a precedent.
-> The carve-out that allowed it has been removed.
-
 ### 2.2 Branch and PR naming
 
 - Branch: `agent/<short-topic>` (e.g. `agent/fix-alexnet-main-guard`).
@@ -62,6 +59,7 @@ This is the collaboration contract with the human:
 ### 2.3 Handoff file rules
 
 - Progressive number, **never reuse a number**, never edit an older handoff.
+- Write the handoff bit by bit, so that even if your session is prematurely terminated, you have something written down
 - Include the *evidence*: the command you ran and the output that proves the card is done.
 - Record failures and dead ends too — they save the next agent hours.
 - State your **assumptions** explicitly if you resolved any ambiguity yourself.

@@ -23,6 +23,11 @@ Data/datasets/*
 !Data/datasets/.gitkeep
 Data/images/*
 !Data/images/.gitkeep
+# TensorBoard / checkpoint roots written by train.py and train_final.py. The repo-wide
+# *.ckpt rule covers the weights, but the log roots are per-model defaults
+# (AlexNet -> Data/logs, GoogLeNet -> GoogLeNet/logs) and were not covered.
+logs/
+Data/ckpt/
 
 # from repo
 # Byte-compiled / optimized / DLL files
