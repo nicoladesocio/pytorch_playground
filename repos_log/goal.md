@@ -4,6 +4,10 @@
 > Keep this file curated: update it in the same PR that changes direction.
 > Working state lives in [KANBAN.md](./KANBAN.md); agent-to-agent narrative lives in
 > [handoffs/](./handoffs/).
+>
+> **New agent? Start at [AGENT_INSTRUCTIONS.md](./AGENT_INSTRUCTIONS.md)** — it defines the
+> reading order, the PR workflow, and how to run the code. Read only the **latest** handoff,
+> never all of them.
 
 ## Mission
 
@@ -50,12 +54,15 @@ A model is considered **trained** when all of the following hold:
 5. No per-batch `print()` spam; observability comes from Lightning loggers.
 6. A short run (smoke) and a real run both complete without OOM on the target hardware.
 
-## Current status (as of HANDOFF_001)
+## Current status (as of HANDOFF_002)
+
+"Trainable?" = produces a **converged**, reproducible run, not merely a run that starts.
+Both models execute `Trainer.fit()` on CPU without error (HANDOFF_002); neither has converged.
 
 | Model | Trainable? | Notes |
 |---|---|---|
-| GoogLeNet | Partially | Most stable path. Imports `pytorch_lightning`, which is **not** a declared dependency. |
-| AlexNet | No | Plateaus at `loss ≈ 6.9` (= `log(1000)`, random guessing) with vanishing gradients. Also has a `Trainer` block sitting outside its `__main__` guard. |
+| GoogLeNet | Partially | Most stable path. Completes `Trainer.fit()` on CPU (HANDOFF_002). Uses bare top-level imports (`from inception import …`) that break package-style imports. |
+| AlexNet | No | Runs on CPU, but plateaus at `loss ≈ 6.9` (= `log(1000)`, random guessing) with vanishing gradients. Also has a `Trainer` block sitting outside its `__main__` guard, and a latent `256*6*6` classifier shape bug (`P2-13`). |
 
 Neither model has ever produced a verified, reproducible converged run with committed
 evidence. See [KANBAN.md](./KANBAN.md) for the prioritised work.
@@ -73,22 +80,32 @@ evidence. See [KANBAN.md](./KANBAN.md) for the prioritised work.
 5. **Prefer `trainer/` over `trainer_v2/`** for any real training run.
 6. **Evidence over assertion.** Claim a model "trains" only with a log/metric excerpt in
    your handoff.
-7. Work on a feature branch and open a PR; do not push to `main` directly.
-   *Carve-out*: `repos_log/` documentation may be merged straight to `main` when a GitHub write
-   credential is unavailable (this host authenticates over SSH only) **and** the change is
-   docs-only — the shared board is worthless if it never reaches `main`. Record any such merge,
-   with the reason, in your handoff. Code changes never qualify.
+7. **Work on a feature branch and open a PR; never merge to `main` yourself.** The agent's
+   deliverable is *handoff + PR*; the human reviews and merges. This applies to code **and**
+   documentation. If you cannot open a PR (no GitHub credential — see
+   [AGENT_INSTRUCTIONS.md §6](./AGENT_INSTRUCTIONS.md)), push the branch and record the exact
+   PR title/body in your handoff. **Do not merge instead.**
+   *(The direct merge in HANDOFF_001 was a deviation and is not a precedent.)*
 
 ## Environment reality check
 
-The documented environment is the devcontainer (`pytorch/pytorch:2.10.0-cuda12.8`,
-`/workspace` bind mount). The **Windows host is not a viable training box**:
+**Everything runs in Docker; experiments run on CPU.** Verified in HANDOFF_002:
 
-- Host GPU is a GTX 960M (Maxwell, `sm_50`, 4 GB) on driver 465.89 → CUDA 11.3 era.
-  Modern PyTorch CUDA wheels need a much newer driver, and `sm_50` is no longer supported.
-- Host Python has `datasets`/`numpy`/`PIL` but **no `torch`, `torchvision`, or `lightning`**.
-- All default paths are container-only (`/workspace/...`), so nothing runs on the host
-  without path fixes (kanban: `portable-paths`).
+- The working container is `nicoladesocio/pytorchplayground:latest` (already built locally,
+  33.5 GB). It has a `code-server` `ENTRYPOINT`, so you must pass `--entrypoint` to
+  `docker run`, and it is **missing the repo's declared deps** (`lightning`, `datasets`, …) —
+  install them once per container.
+- **GPU is unusable.** `docker run --gpus all` fails with
+  `nvidia-container-cli: initialization error: ... libnvidia-ml.so.1: file too short`, and
+  `torch.cuda.is_available()` is `False`. Two independent causes: the host driver (465.89)
+  predates WSL2 CUDA passthrough, and the GTX 960M is Maxwell `sm_50`, no longer supported by
+  modern PyTorch wheels.
+- **CPU works.** Both `AlexNetLightning` and `GoogLeNetLightning` complete a real
+  `Trainer.fit()` on CPU. Use small `--train_samples` / `--batch_size` / `max_epochs`.
+- `pyproject.toml` is **not** the GPU problem — it declares plain `torch`/`torchvision` and
+  pip resolves a working build per machine. The blocker is the host driver.
+- All default paths are still container-only (`/workspace/...`), so nothing runs on the host
+  without path fixes (kanban `P1-4`).
 
-Plan training work against the devcontainer (or another CUDA machine), and keep a
-CPU-runnable smoke path for CI.
+Plan training work against the container on **CPU**. Treat a CUDA machine as an optional
+accelerator, not a prerequisite.

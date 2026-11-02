@@ -26,8 +26,10 @@
 
 | ID | Card | Blocked on | Owner |
 |---|---|---|---|
-| `P2-11` | AlexNet convergence (vanishing gradient, loss stuck at 6.9) | Needs `P1-1`,`P1-2`,`P1-4`,`P2-1` done + CUDA box to iterate | — |
-| `P3-6` | Decide fate of `trainer_v2/` (finish vs. delete vs. freeze) | Product decision from repo owner | — |
+| `P2-11` | AlexNet convergence (vanishing gradient, loss stuck at 6.9) | Needs `P1-1`,`P1-2`,`P1-4`,`P2-1` done. ~~CUDA box~~ **CPU is viable** (verified HANDOFF_002) — start with the overfit-one-batch experiment | — |
+
+> `trainer_v2/`'s fate is tracked once, as `P3-6` in the P3 list below (blocked on a product
+> decision from the repo owner). It was previously duplicated here.
 
 ---
 
@@ -38,6 +40,8 @@
 | `P0-1` | Explore repo; audit good / bad / missing | HANDOFF_001 | [001](./handoffs/HANDOFF_001.md) |
 | `P0-2` | Create `repos_log/` with curated `goal.md` + `handoffs/` | HANDOFF_001 | [001](./handoffs/HANDOFF_001.md) |
 | `P0-3` | Create this shared kanban | HANDOFF_001 | [001](./handoffs/HANDOFF_001.md) |
+| `P0-4` | Write `AGENT_INSTRUCTIONS.md` — reading order, PR-as-deliverable contract, Docker/CPU runbook | HANDOFF_002 | [002](./handoffs/HANDOFF_002.md) |
+| `P0-5` | Verify the Docker environment: image runs, deps installable, **both models complete `Trainer.fit()` on CPU**, GPU confirmed unusable | HANDOFF_002 | [002](./handoffs/HANDOFF_002.md) |
 
 ---
 
@@ -46,11 +50,12 @@
 | ID | Card | Acceptance criteria | Est. |
 |---|---|---|---|
 | `P1-1` | **Fix `AlexNet/train.py`: `Trainer` block escapes `__main__` guard.** Lines 73–93 (`trainer = pl.Trainer(...)` … `save_model_checkpoint(...)`) are module-level, so they execute on *import* — including `import model`-adjacent imports and any test collection. `lightning_model`/`args` are only bound inside the guard. | `python -c "import AlexNet.train"` is a no-op; whole body indented under `__main__`; smoke train completes. | S |
-| `P1-2` | **Declare `pytorch_lightning` dependency.** `GoogLeNet/model.py` + `GoogLeNet/train.py` import `pytorch_lightning`, but `pyproject.toml` lists only `lightning`. `lightning` does not reliably install the legacy `pytorch_lightning` top-level package. | Standardise **all** imports on `lightning` (preferred) *or* add `pytorch_lightning` to deps; `python -c "import GoogLeNet.train"` succeeds in a clean venv. | S |
+| `P1-2` | **Standardise Lightning imports + fix intra-package imports.** ~~Declare `pytorch_lightning`~~ — **claim corrected in HANDOFF_002**: `lightning` 2.6.6 *does* depend on `pytorch_lightning`, so both import fine. The real problems are (a) two inconsistent import styles across models, and (b) `GoogLeNet/model.py:4` uses `from inception import ...` and `GoogLeNet/train.py:4` uses `import model` — bare top-level imports that only resolve if `GoogLeNet/` is itself on `sys.path`, so `import GoogLeNet.model` fails from the repo root. | All modules use `import lightning as pl`; intra-package imports are relative or package-qualified; `python -c "import GoogLeNet.model, GoogLeNet.train"` succeeds from the repo root. | S |
 | `P1-3` | **Fix `trainer` CLI invocation.** `python trainer …` and `python trainer/trainer.py …` (both documented in `README.md` / `trainer/README.md`) crash with `ModuleNotFoundError: No module named 'trainer.model_base'; 'trainer' is not a package` — the script's own folder lands on `sys.path[0]` and shadows the `trainer` package. Only `python -m trainer` works. | All three documented forms work, or docs + `trainer/README.md` state `python -m trainer` as the only supported form and the script-form fallback is removed. Add a smoke test. | S |
 | `P1-4` | **Portable paths.** Every default is container-only (`/workspace/AlexNet/checkpoints`, `/workspace/Data/datasets/`, `/workspace/GoogLeNet/logs`). Nothing runs outside the devcontainer. | Paths derive from `PROJECT_ROOT` (or a `--data-root` / `PYTORCH_PLAYGROUND_ROOT` env var); defaults resolve correctly on Linux, in-container, and on Windows. | M |
 | `P1-5` | **`Dockerfile` build is broken.** `COPY nscacert.crt …` references a gitignored, absent file → `docker build` fails at step 1. Also pins `openjdk-11-jdk` (EOL) purely for a corporate cert. | Image builds from a clean checkout; corporate-cert handling is opt-in (build arg / separate stage), not mandatory. | M |
 | `P1-6` | **`Data/datasets/` placeholder missing.** `.gitignore` whitelists `!Data/datasets/.gitkeep` but the directory doesn't exist, so the documented cache root has no anchor and `load_dataset_subset` must `makedirs` blind. | `Data/datasets/.gitkeep` committed; cache root exists after clone. | XS |
+| `P1-7` | **`pip install -e .` does not install the `trainer` CLI.** `pyproject.toml`'s `[tool.hatch.build.targets.wheel] packages` lists `AlexNet`, `GoogLeNet`, `utils`, `custum_datasets`, `trainer_v2` — but **not `trainer/`**. Verified by building the wheel in HANDOFF_002: `trainer/` is absent from the archive. So the one working entrypoint (`python -m trainer`) only works from a source checkout, never from an installed package. | `trainer` in `packages`; built wheel contains `trainer/*.py`; `python -m trainer --help` works in a venv with only the wheel installed. | XS |
 
 ---
 
@@ -68,6 +73,8 @@
 | `P2-8` | **`AlexNet/test_synthetic.py` is not a test.** It's a script that unconditionally calls `.cuda()` (crashes on CPU-only hosts), allocates `100×3×227×227` fp32 (~600 MB) up front, and asserts nothing — so it can't be run by pytest or CI. | Converted to a real pytest test with `@pytest.mark.skipif` on no-CUDA (or CPU-forced), tiny shapes, and an assertion that loss decreases. | M |
 | `P2-9` | **No test suite, linter, formatter, or CI.** `pyproject.toml` has no `[project.optional-dependencies]`, no pytest/ruff/black config, no CI workflow. Nothing catches the `__main__`-guard or import bugs above. | `pytest`, `ruff`, `black` configured + dev extras; GitHub Actions workflow runs lint + CPU smoke tests on PR. | M |
 | `P2-10` | **`create_subset_sampler` silently shrinks epochs / can starve validation.** `num_samples=num_in_class` with `replacement=False` means an epoch only covers the in-class fraction of the cached subset — with 51 200 cached samples and 64/1000 classes that's ~3 300 real images per epoch, so `--train-samples` is misleading. `val_samples=2048` likewise yields ~130 usable val images, and `drop_last=True` can drop the *entire* val loader if <1 batch survives. | Epoch size is explicit and logged; validation never silently empties; clear error/warning when in-class count < `batch_size`. | M |
+| `P2-12` | **The Dockerfile in the repo does not build the image actually in use.** `nicoladesocio/pytorchplayground:latest` (33.5 GB, present locally) was built from a **different** Dockerfile: it installs `code-server` 4.96.4 with an `ENTRYPOINT`, and ships `torch 2.13.0+cu132` / Python 3.12, whereas the repo `Dockerfile` pins `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel` and has no `code-server`. Consequences: (a) `docker run <image> python3 …` fails with `exec: "code-server": executable file not found in $PATH`; (b) the image is **missing** `lightning`, `datasets`, `tensorboard`, `scipy`, `pandas`, `scikit-learn`, `tqdm`. Note `pip install .` of a hatchling project whose `packages` dirs are absent still **succeeds silently**, so the dependency layer can pass while installing nothing. | Repo `Dockerfile` builds reproducibly and the resulting image imports every declared dep; `docker run --rm <image> python -c "import lightning, datasets"` passes; no `code-server` ENTRYPOINT surprise (or it is an explicit opt-in stage). | M |
+| `P2-13` | **AlexNet classifier hardcodes `256*6*6` — latent shape bug.** `AlexNet/model.py:39` uses `nn.Linear(256 * 6 * 6, 4096)`, but conv1 is `stride=4` with **no padding**, so spatial size is `floor((H-11)/4)+1` then pooled. Verified in HANDOFF_002: `224→6400` (**RuntimeError: mat1 and mat2 shapes cannot be multiplied (2x6400 and 9216x4096)**), `227/231/256→9216` OK. It works today *only* because both `train.py` files happen to pass `image_size=227`, while `ImageNetSubsetDataset`'s own default is `image_size=224`. Any caller using the default hits the crash. | Flatten size derived from the model's own conv stack (or an explicit `input_size` arg validated at construction); incompatible size raises a clear message naming the expected size; a test covers 224 and 227. | S |
 
 ---
 
@@ -97,4 +104,5 @@
 - **Experiment registry**: record run config + result per run to compare AlexNet/GoogLeNet attempts over time.
 - **`ImagesFolderDataset`**: `os.listdir` is not recursive and it returns `(image, filename)` — unusable for classed inference; consider `ImageFolder` from torchvision.
 - **`visualize_weights.py`**: AlexNet and GoogLeNet copies duplicate ~80 % of each other; unify into `utils/`.
-- **GPU strategy for this host**: document a CPU-only smoke profile (tiny samples, batch 8) so agents without CUDA can still validate plumbing.
+- **GPU strategy for this host**: ✅ resolved in HANDOFF_002 — CPU-only is the supported
+  experiment path; see [AGENT_INSTRUCTIONS.md §4](./AGENT_INSTRUCTIONS.md).
