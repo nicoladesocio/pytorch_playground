@@ -34,8 +34,9 @@
 7. **Both deliverable scripts run end to end** (`--smoke`, exit 0) and both land exactly on
    chance after 2 epochs — which is the expected signature of "correct code, not enough
    training", not of a broken network (§6.3, §6.8). What is *not* done: no run has beaten
-   chance yet (`P2-14`), the canonical 51 200/2 048 subset is still downloading (`P1-8`), and
-   the baked-in `CONFIG` numbers are informed defaults rather than measured values (`P3-13`).
+   chance yet (`P2-14`), the canonical 51 200/2 048 subset is built and verified but under the
+   *wrong* cache key for the deliverable (`P1-8` — one 13-minute re-run with `SEED=42`, see §9.1),
+   and the baked-in `CONFIG` numbers are informed defaults rather than measured values (`P3-13`).
    Your first job is §9.
 
 ---
@@ -460,6 +461,60 @@ sample item: <class 'dict'> (96123, 'n02978881_9704_n02978881.JPEG') label 481
 208 s for 4096+512 samples at flat RSS, versus an OOM-kill before. The `34 / 512` line is what
 motivated requiring val support in `choose_target_classes`.
 
+#### Canonical 51200/2048 subset — built and measured
+
+`python probes/check_big.py` (parquet download + `save_to_disk` took **759 s**, ~13 min; reload
+from cache is **16.5 s** and needs no network):
+
+```
+Loading cached subset of ILSVRC/imagenet-1k from
+  Data/datasets/ILSVRC__imagenet-1k_51200t_2048v_auto_2ecb016d7b0d
+Train dataset size: 51200
+Validation dataset size: 2048
+elapsed=16.5s train=51200 val=2048
+train classes: 1000
+val classes: 883
+per-class train min/p25/med/p75/max: 22 47 51 56 73
+per-class val   min/p25/med/p75/max: 1 1 2 3 10
+Selected 10 classes; per-class cached counts: min=68, median=70, max=73
+K=10:  in-class train=701  val=23  classes=[45, 103, 219, 246, 556, 645, 801, 853]...
+Selected 64 classes; per-class cached counts: min=62, median=66, max=73
+K=64:  in-class train=4210 val=153 classes=[3, 10, 18, 26, 35, 36, 45, 73]...
+Selected 128 classes; per-class cached counts: min=59, median=62, max=73
+K=128: in-class train=8084 val=303 classes=[3, 10, 18, 22, 26, 35, 36, 45]...
+sampler len: 701
+DONE
+```
+
+What these numbers mean for the next agent:
+
+* **All 1000 train classes survive** the 51200-sample cut, and the per-class distribution is
+  tight (22–73, median 51). The subset is *not* pathologically skewed, so `choose_target_classes`
+  has plenty of freedom.
+* **Validation is the thin side.** 883/1000 classes appear at all, and the median class has
+  **1** val image (p75 = 3). At `K=64` the whole validation set is **153 images** — one image per
+  class on average. `val_acc` at that size has a resolution of ~0.65 % and its noise is ±several
+  percent, so *do not* read a 1–2 % `val_acc` difference at `K=64` as signal. Either raise
+  `val_samples` or judge convergence on `train_loss` + a larger val split.
+* **`K=64` gives 4210 in-class train images** = 44 batches at `batch_size=96`. That is a real
+  epoch, not the 1-batch-per-epoch trap of `P2-7`/§3.7.
+* **`sampler len: 701` at `K=10`** confirms `create_subset_sampler` returns exactly one pass over
+  the in-class samples with no repeats (`num_samples=None` → `num_in_class`).
+
+**Cache-key / seed gotcha (cost me a wasted 5.7 GB build).** `seed` is part of `_cache_key`, and
+`train_final.py` bakes `"seed": 42`, which hashes to
+`ILSVRC__imagenet-1k_51200t_2048v_auto_c58e22ff2538`. The statistics above were produced under
+`seed=1337` → `..._2ecb016d7b0d`, a *different* directory. `probes/check_big.py` now pins
+`SEED = 42` to match the deliverable. If you build a subset with any other seed, `train_final.py`
+will not find it and will start a 13-minute download. Check the directory name against
+`_cache_key(dataset_name, 51200, 2048, None, 42)` before assuming a cache is warm.
+
+**`save_to_disk` memory.** The first attempt at the `seed=42` subset was **OOM-killed at 2/12
+shards** inside the 8.25 GB container cap; the `seed=1337` build completed all 12 shards (it was
+re-run after the earlier parts were already on disk, and peak RSS stayed under the cap). So the
+round-trip is *borderline*, not impossible, at this size — see `P1-8` for the proposed fix (let
+the cache be the part files and skip `save_to_disk` entirely).
+
 ### 6.2 Accuracy metric — measured Lightning aggregation semantics
 
 `probes/check_metric.py` logs the same ground-truth accuracy (60.0 %) three ways through a real
@@ -682,7 +737,11 @@ gap is `P3-13`: the baked-in `CONFIG` numbers are still informed defaults, not m
   GPU**. They must be re-baked once a real GPU run exists. Until then the scripts are correct
   in shape but their numbers are provisional — do not cite them as tuned.
 - `--shuffle_buffer` is now dead weight on the parquet path. Decide whether to keep it purely
-  for the streaming fallback (my recommendation) or remove it from the CLI.
+  for the streaming fallback (my recommendation) or remove it from the CLI. The cache-invalidation
+  hazard it created is **already fixed** (`identity_keys` in `load_dataset_subset` excludes
+  `shuffle_buffer_size` from the comparison); what is left is the keep-or-remove decision (`P3-12`).
+- `save_to_disk` is the only memory-heavy step left in the data path and is borderline at
+  51200 samples under the 8.25 GB container cap (`P3-14`).
 - Whether to keep the streaming fallback at all. I kept it; deleting it would break any
   non-parquet dataset.
 - `trainer_v2/` (`P3-6`) and the stale `origin/update_streaming_dataset` branch (`P3-9`) are
@@ -696,13 +755,17 @@ gap is `P3-13`: the baked-in `CONFIG` numbers are still informed defaults, not m
 Read in this order: `repos_log/AGENT_INSTRUCTIONS.md` → `repos_log/goal.md` → this file §0 →
 `repos_log/KANBAN.md` 🔥 column. Then, in this order:
 
-1. **Finish `P1-8` — the canonical subset.** Check whether
-   `Data/datasets/ILSVRC__imagenet-1k_51200t_2048v_auto_c58e22ff2538/` has `train/`,
-   `validation/` and `metadata.json`. If the process died, just re-run
-   `python probes/check_big.py` (it prints the class statistics you need to verify); the
-   download resumes from `_manifest.json`. Verify the
-   printed class statistics before trusting it. **Do not** delete `_manifest.json` unless you
-   mean to restart the download.
+1. **Finish `P1-8` — the canonical subset.** One command:
+   `python probes/check_big.py` (now pinned to `SEED = 42`, which is what `train_final.py`
+   bakes). It takes ~13 min and **resumes** from `_manifest.json`. Then confirm
+   `Data/datasets/ILSVRC__imagenet-1k_51200t_2048v_auto_c58e22ff2538/` contains `train/`,
+   `validation/` and `metadata.json`.
+   *Why it is still open:* the verified subset in §6.1 was built with `seed=1337` →
+   `..._2ecb016d7b0d`, and `seed` is part of `_cache_key`, so `train_final.py` (`"seed": 42`)
+   looks in `..._c58e22ff2538` and finds only a partial 534 MB download. **The mechanism is
+   proven** — the other seed completed all 12 shards — this is a "run it once with the right
+   seed" task, not an investigation. **Do not** delete `_manifest.json` unless you mean to
+   restart the download. If `save_to_disk` is OOM-killed again, that is `P3-14`, not a mystery.
 2. **Run the two probes I wrote but never executed** — they are the cheapest remaining
    correctness risks:
    - `probes/check_resume.py` (`P3-11`) — kill the download at 90 s, resume, and compare label/path
