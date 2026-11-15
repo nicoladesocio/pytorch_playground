@@ -68,8 +68,12 @@ CONFIG = {
     "log_grad_norms": True,
 }
 
-# CPU / quick-verification variant: same recipe, drastically less work. Nothing here
-# may touch the optimisation hyperparameters.
+# Quick-verification variant: same recipe, drastically less work. Nothing here may
+# touch the optimisation hyperparameters.
+#
+# `accelerator`/`precision` are deliberately NOT pinned to cpu/32 here -- see
+# _smoke_overrides(). Pinning them meant a GPU box silently ran its smoke test on CPU,
+# which is how "the GPU is unusable" survived three handoffs unchallenged.
 SMOKE_OVERRIDES = {
     "train_samples": 1024,
     "val_samples": 256,
@@ -77,13 +81,35 @@ SMOKE_OVERRIDES = {
     "max_epochs": 2,
     "batch_size": 16,
     "eval_batch_size": 16,
-    "precision": "32",
-    "accelerator": "cpu",
     "num_workers": 2,
     "shuffle_buffer": 512,
     "version_name": "alexnet_smoke",
 }
 # ---------------------------------------------------------------------------
+
+
+def _smoke_overrides(cfg):
+    """Resolve the smoke variant against the hardware actually present.
+
+    The point of --smoke is "prove the pipeline works, as fast as possible, without
+    changing the recipe". Running it on the fastest device available is therefore the
+    faithful reading, and it is what makes a GPU smoke run and a CPU smoke run the same
+    experiment rather than two different ones.
+
+    On a GPU we keep CONFIG's precision (so the mixed-precision path the human will
+    actually run is the path being tested); on CPU we must fall back to 32, which
+    Lightning requires. Batch size stays small either way so the run fits a 6 GB card.
+    """
+    import torch
+
+    overrides = dict(SMOKE_OVERRIDES)
+    if torch.cuda.is_available():
+        overrides["accelerator"] = "gpu"
+        overrides["precision"] = cfg["precision"]
+    else:
+        overrides["accelerator"] = "cpu"
+        overrides["precision"] = "32"
+    return overrides
 
 
 def _apply_repo_defaults(cfg):
@@ -99,13 +125,34 @@ def _apply_repo_defaults(cfg):
     return cfg
 
 
+def _describe_device(trainer):
+    """Human-readable device string for the RESULT block.
+
+    Without this, a handoff cannot tell a CPU result from a GPU result, which is
+    precisely how a stale "CPU only" belief survived in AGENT_INSTRUCTIONS.md for
+    three handoffs.
+    """
+    import torch
+
+    # Lightning's Trainer has no `.device`; the placed device lives on the strategy.
+    try:
+        root = str(trainer.strategy.root_device)
+    except Exception:
+        root = "unknown"
+    if root.startswith("cuda") and torch.cuda.is_available():
+        return f"{root} ({torch.cuda.get_device_name(0)})"
+    return root
+
+
 def main():
     # --smoke is intentionally the only accepted argument.
     smoke = "--smoke" in sys.argv[1:]
     cfg = dict(CONFIG)
     if smoke:
-        cfg.update(SMOKE_OVERRIDES)
+        cfg.update(_smoke_overrides(cfg))
         print("=== SMOKE TEST MODE: reduced sizes, identical recipe ===")
+        print(f"    device    = {cfg['accelerator']}  (chosen from torch.cuda.is_available())")
+        print(f"    precision = {cfg['precision']}")
     cfg = _apply_repo_defaults(cfg)
 
     if cfg["dataset_name"] == "ILSVRC/imagenet-1k" and not (
@@ -139,6 +186,11 @@ def main():
     for key in ("train_loss", "train_acc", "val_loss", "val_acc"):
         if key in metrics:
             print(f"{key:>12} = {float(metrics[key]):.4f}")
+    # Record what the run actually executed on. Without this, a handoff cannot tell a
+    # CPU result from a GPU result, which is precisely how a stale "CPU only" belief
+    # survived in AGENT_INSTRUCTIONS.md for three handoffs.
+    print(f"{'device':>12} = {_describe_device(trainer)}")
+    print(f"{'precision':>12} = {trainer.precision}")
     print(f"{'checkpoints':>12} = {cfg['checkpoint_path']}")
     print(f"{'tensorboard':>12} = {cfg['log_path']}")
     n = cfg["num_classes"]
