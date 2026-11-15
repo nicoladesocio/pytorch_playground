@@ -145,8 +145,11 @@ def _describe_device(trainer):
 
 
 def main():
-    # --smoke is intentionally the only accepted argument.
-    smoke = "--smoke" in sys.argv[1:]
+    # --smoke is intentionally the only accepted argument; anything else is a typo and
+    # must fail loudly rather than silently start a full run (see runtime.validate_final_args).
+    from utils.runtime import validate_final_args
+
+    smoke = validate_final_args(sys.argv[1:], "AlexNet/train_final.py")
     cfg = dict(CONFIG)
     if smoke:
         cfg.update(_smoke_overrides(cfg))

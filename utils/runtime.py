@@ -112,6 +112,29 @@ def count_available_workers(requested, bytes_per_worker=0):
     return max(0, min(int(requested), limit))
 
 
+def validate_final_args(argv, script, allowed=("--smoke",)):
+    """Fail fast on anything ``*/train_final.py`` was not written to accept.
+
+    These scripts are the parameterless deliverables: ``CONFIG`` is the experiment and
+    ``--smoke`` is the only flag. Reading ``sys.argv`` with ``in`` rather than parsing it
+    means an unrecognised argument is *silently ignored*, so ``--smok`` does not fail --
+    it drops out of the check, the run is treated as a full training, and a typo costs
+    hours instead of seconds. That is a worse failure than a crash.
+
+    Rejecting unknown arguments is also what keeps the deliverable honest: a flag that
+    does nothing is an invitation to believe it did something.
+    """
+    unknown = [a for a in argv if a not in allowed]
+    if unknown:
+        raise SystemExit(
+            f"{script}: unrecognised argument(s): {', '.join(unknown)}\n"
+            f"{script} accepts no arguments except: {', '.join(allowed)}.\n"
+            "Hyperparameters live in the CONFIG dict at the top of the file; use "
+            "`trainer train <model> --set key=value` when you need to override one."
+        )
+    return "--smoke" in argv
+
+
 def resolve_accelerator(requested="auto"):
     """Return ``(accelerator, devices)`` for Lightning, tolerating a missing GPU.
 
