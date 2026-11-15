@@ -14,7 +14,7 @@ padding**, so spatial size is `floor((H-11)/4)+1` then pooled.
 
 | `image_size` | flatten features | result |
 |---|---|---|
-| 224 | 6400 | **RuntimeError: mat1 and mat2 shapes cannot be multiplied (2x6400 and 9216x9216)** |
+| 224 | 6400 | **RuntimeError: mat1 and mat2 shapes cannot be multiplied (2x6400 and 9216x4096)** |
 | 227 | 9216 | OK |
 | 231 | 9216 | OK |
 | 256 | 9216 | OK |
