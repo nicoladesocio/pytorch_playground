@@ -238,6 +238,39 @@ simultaneously reporting `labels identical: True` / `paths identical: True` and 
 `_manifest.json`. Without that file the parts are deliberately deleted as untrusted, so its
 presence is precisely what makes resume possible.
 
+### 3.14 The same rot existed in the kanban, in a different shape
+
+I flagged §4's GPU claim as "a local truth written as a universal rule" and then left the kanban
+carrying exactly that defect: a `👀 REVIEW / WAITING` chapter and a `### Added by HANDOFF_003`
+sub-table were both *per-handoff* artefacts baked into a *shared* document, and the three
+`📋 TODO — P1/P2/P3` chapters made priority a structural axis when it is already a column. The
+owner caught it; I should have. The board is now four chapters and the rule is written into
+§5 so the next agent cannot reintroduce it.
+
+The related lesson is about `IN PROGRESS` itself. My three 🔥 cards each had a paragraph
+appended describing progress, which reads like progress and is not the same as completion.
+Appending an "update" to a card is the documentation equivalent of a probe that can only pass:
+there is no statement in the card that could be shown false. Every `IN PROGRESS` card now
+carries an explicit **Still missing:** clause, so closing it requires deleting a falsifiable
+sentence rather than adding a favourable one.
+
+The owner then caught a third instance of the same disease in `BACKLOG / IDEAS`, which I had
+left alone while restructuring: two bullets were written as `~~old state~~ now done, remaining
+idea: ...`. A list titled "unscheduled" that contains completed work is not a work queue — the
+next agent scanning it for something to pick up cannot separate done from not-done, and a
+half-done bullet quietly becomes permanent furniture. Both halves were genuinely finished
+(`16-mixed` in both `CONFIG` dicts, verified at `AlexNet/train_final.py:54` and
+`GoogLeNet/train_final.py:60`, plus the mixed-precision GPU run; and the overfit-one-batch tool
+in `check_overfit2.py` + `check_learn.py`), so they are now `P2-22`/`P2-23` in `DONE` and only
+the unfinished `bf16-mixed` idea remains in the backlog. A third bullet, "GPU strategy", was not
+an idea at all but a superseded correction, so it is gone — its content already lives in `P2-19`
+and §4.
+
+The pattern across all three: **a document that mixes states stops being actionable.** §4's
+"GPU is unusable" mixed one host's state with the repo's rules; the kanban's per-handoff
+chapters mixed one agent's batch with the shared board; the backlog mixed done with to-do. The
+fix is the same each time — one place per state, and anything that can be checked is checked.
+
 ---
 
 ## 4. Code changes
@@ -263,7 +296,8 @@ presence is precisely what makes resume possible.
 | File | Change |
 |---|---|
 | `AlexNet/train_final.py`, `GoogLeNet/train_final.py` | `SMOKE_OVERRIDES` no longer pins `accelerator`/`precision`; new `_smoke_overrides(cfg)`; new `_describe_device(trainer)`; RESULT block prints `device` and `precision`; smoke banner echoes the chosen device. `--smoke` remains the only accepted argument. |
-| `repos_log/AGENT_INSTRUCTIONS.md` | §3 rewritten (probe-first rule, `Dockerfile.gpu` + flag rationale, gotchas, venv fallback, `import model` warning). §4 rewritten as "measure, do not trust this document" with the old rule quoted verbatim, a four-property table, and a verdict→action table. §6 rewritten as procedure + per-host table. §7 rewritten portable. |
+| `repos_log/KANBAN.md` | Moved `P1-8`, `P2-18`, `P3-11` to ✅ DONE with evidence links; added `P2-19`/`P2-20`/`P2-21`; annotated `P0-5` (its "GPU confirmed unusable" half was a false negative). **Restructured to exactly four chapters** — `TODO` / `IN PROGRESS` / `DONE` / `BACKLOG / IDEAS` — per the owner's rule: the `👀 REVIEW / WAITING` chapter and the `### Added by HANDOFF_003` sub-table are gone (its five cards moved into `TODO` in ID order), and the three `📋 TODO — P1/P2/P3` chapters were merged into one `TODO`. All 48 pre-existing cards preserved (verified by set-diff against `HEAD`: `lost: []`). Rewrote the three `IN PROGRESS` cards with explicit **Still missing:** clauses. Moved two completed backlog ideas out of `BACKLOG / IDEAS` into `DONE` as `P2-22` (mixed precision) and `P2-23` (overfit-one-batch tooling), keeping only the unfinished `bf16-mixed` half in the backlog, and deleted the `GPU strategy` bullet, which was a superseded correction rather than an idea. |
+| `repos_log/AGENT_INSTRUCTIONS.md` | §3 rewritten (probe-first rule, `Dockerfile.gpu` + flag rationale, gotchas, venv fallback, `import model` warning). §4 rewritten as "measure, do not trust this document" with the old rule quoted verbatim, a four-property table, and a verdict→action table. §6 rewritten as procedure + per-host table. §7 rewritten portable. §5 working rules 3–5 added: the four-chapter kanban rule, the rule that an `IN PROGRESS` card must carry an explicit **Still missing:** clause rather than an appended "update", and the rule that `BACKLOG / IDEAS` may contain only unfinished work (no completed or struck-through bullets). Old rules renumbered 6–11. |
 | `repos_log/goal.md` | "Environment reality check" rewritten — the same false GPU claim existed here independently of §4. |
 
 ---

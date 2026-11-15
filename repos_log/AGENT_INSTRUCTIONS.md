@@ -271,17 +271,33 @@ complete a `Trainer.fit()` on CPU, so a CPU-only agent is not blocked, merely sl
 1. **Evidence over assertion.** Never claim a model "trains" without a log/metric excerpt in
    your handoff. Run it; paste the output.
 2. **Reproduce before you fix.** Confirm the bug exists, then fix it, then confirm it is gone.
-3. **Move kanban cards; don't invent duplicates.** New work → new card at the bottom of
-   `BACKLOG` with a `P1/P2/P3` prefix; never renumber existing cards.
-4. **Never commit** credentials, `nscacert.crt`, `Data/datasets/**`, or `*.ckpt` (gitignored).
-5. **Prefer `trainer/` over `trainer_v2/`.** `trainer_v2/` is a non-working draft.
-6. **Don't rename `custum_datasets/`** silently — it is a tracked card; a repo-wide rename
+3. **Move kanban cards; don't invent duplicates.** `KANBAN.md` has **exactly four
+   chapters — `TODO`, `IN PROGRESS`, `DONE`, `BACKLOG / IDEAS` — and no others.** Do not add a
+   `REVIEW / WAITING` chapter, and do not append a `### Added by HANDOFF_<NNN>` sub-table;
+   those existed and were removed in HANDOFF_004 because they let cards drift out of the
+   board's reach. New work → a row in `TODO` in ID order with a `P1/P2/P3` prefix; never
+   renumber existing cards. `BACKLOG / IDEAS` is for unscheduled ideas, not cards.
+4. **An `IN PROGRESS` card must name what is still missing.** Appending an "update" to a card
+   is not progress and is not a way to close it. Either its acceptance criteria are met and
+   evidence is in a handoff (move it to `DONE`), or they are not — in which case the card
+   carries an explicit **Still missing:** clause. A card parked in `IN PROGRESS` with no gap
+   stated will be read as nearly-done by the next agent, and it usually is not.
+5. **`BACKLOG / IDEAS` holds only unscheduled work.** It is a list of things still to do, not a
+   changelog. When an idea (or half of one) is finished, it leaves the backlog: give it an ID and
+   put it in `DONE` with its evidence, and either delete the bullet or rewrite it so that what
+   remains is *only* the unfinished part, pointing at the `DONE` row. Never leave a completed or
+   struck-through (`~~like this~~`) item sitting in the ideas list — a reader scanning the backlog
+   for work to pick up cannot tell done from not-done, and half-done bullets quietly become
+   permanent. (`P2-22` and `P2-23` are the corrected examples.)
+6. **Never commit** credentials, `nscacert.crt`, `Data/datasets/**`, or `*.ckpt` (gitignored).
+7. **Prefer `trainer/` over `trainer_v2/`.** `trainer_v2/` is a non-working draft.
+8. **Don't rename `custum_datasets/`** silently — it is a tracked card; a repo-wide rename
    buries the real diff.
-7. **Clean up.** Delete probe scripts, scratch files, and containers you started
+9. **Clean up.** Delete probe scripts, scratch files, and containers you started
    (`docker rm -f <name>`) before opening the PR. Check `git status` for stray files.
-8. **Small, reviewable PRs.** The human reviews these by hand. A 40-file PR gets rejected;
+10. **Small, reviewable PRs.** The human reviews these by hand. A 40-file PR gets rejected;
    a 3-file PR with evidence gets merged.
-9. **If blocked, stop and document.** Make a reasonable assumption, write it down, continue.
+11. **If blocked, stop and document.** Make a reasonable assumption, write it down, continue.
    If you truly cannot proceed, leave the card `TODO` with a comment in your handoff rather
    than half-fixing it.
 
