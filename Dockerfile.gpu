@@ -1,0 +1,73 @@
+# Hardware-agnostic CUDA training/dev image for pytorch_playground.
+#
+# WHY THIS FILE EXISTS
+# The repo's `Dockerfile` is a corporate-machine artefact: it `COPY`s a gitignored
+# `nscacert.crt` (so `docker build` fails on a clean checkout — kanban P1-5), drags in
+# EOL `openjdk-11-jdk` only to trust that cert, and pins the `-devel` tag nobody on a
+# laptop needs. The image the earlier agents actually used
+# (`nicoladesocio/pytorchplayground:latest`) was built from neither file: it has a
+# `code-server` ENTRYPOINT and is missing most of the project's declared deps.
+#
+# This file is the portable one: no cert, no code-server, no vendor registry, and it
+# runs on any x86_64 Linux host with a working NVIDIA driver + nvidia-container-toolkit.
+# It also runs unchanged on a CPU-only host (torch simply reports
+# `torch.cuda.is_available() == False`), so there is exactly one image to document.
+#
+# BUILD
+#   docker build -f Dockerfile.gpu -t ppg-gpu:latest .
+#
+# RUN (GPU)
+#   docker run -d --name ppg-dev --gpus all --shm-size=8g --entrypoint bash \
+#     -v "$PWD:/workspace" -w /workspace \
+#     -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+#     -e HF_TOKEN \
+#     ppg-gpu:latest -c "sleep infinity"
+#
+#   --gpus all    requires nvidia-container-toolkit; verify with `nvidia-smi -L` on the host.
+#   --shm-size    DataLoader workers pass image tensors through /dev/shm; Docker's 64 MB
+#                 default kills multi-worker runs with
+#                 "unable to allocate shared memory ... No space left on device".
+#   HF_TOKEN      ILSVRC/imagenet-1k is gated. Mounting ~/.cache/huggingface means the
+#                 token `huggingface-cli login` already wrote is picked up, so the secret
+#                 never has to appear in a command line or a committed file.
+#
+# The repo is bind-mounted, so Python edits on the host are live inside the container —
+# you do not rebuild this image to iterate on training code. Rebuild only when
+# pyproject.toml changes.
+
+FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+# Keep the HF cache in one predictable place whether or not it is bind-mounted.
+ENV HF_HOME=/root/.cache/huggingface
+# This base image's Python is Debian's /usr/bin/python3, which carries a
+# PEP 668 EXTERNALLY-MANAGED marker, so a bare `pip install` refuses to run.
+# The earlier agents worked around it by appending --break-system-packages to
+# every command; setting it once here means the documented commands actually
+# work verbatim. (The 2.10 CUDA images dropped conda, so there is no conda env
+# to install into -- devcontainer.json's /opt/conda/bin/python is stale.)
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git wget curl vim ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Dependency layer first: editing Python source must not invalidate the multi-GB pip layer.
+COPY pyproject.toml README.md ./
+RUN pip install --no-cache-dir .
+
+# `pip install .` copies the packages into site-packages, which would shadow the bind
+# mount and make host edits invisible. Uninstall the project, keep its deps, and
+# reinstall editable so `import utils` / `python -m trainer` resolve to /workspace.
+RUN pip uninstall -y pytorch-playground && pip install --no-cache-dir --no-deps -e .
+
+# Sanity gate: fail the build, not the training run, if a declared dep is missing.
+# `pip install` of a hatchling project whose package dirs are absent succeeds silently,
+# which is exactly how the old image ended up "built" without lightning in it (P2-12).
+RUN python -c "import torch, torchvision, lightning, torchmetrics, datasets, PIL, pyarrow, huggingface_hub, numpy, scipy, pandas, sklearn, tqdm, tensorboard; \
+print('deps OK  torch', torch.__version__, '| cuda built', torch.version.cuda)"
+
+CMD ["/bin/bash"]

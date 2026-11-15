@@ -121,32 +121,43 @@ evidence. See [KANBAN.md](./KANBAN.md) for the prioritised work.
 
 ## Environment reality check
 
-**Everything runs in Docker; experiments run on CPU.** Verified in HANDOFF_002:
+**Hardware facts do not travel between agents.** This section was previously a list of one
+machine's findings written as repo-wide rules, and it wrongly concluded the GPU was
+unusable. It is now a *procedure*: measure first, then record your host in the table.
 
-- The working container is `nicoladesocio/pytorchplayground:latest` (already built locally,
-  33.5 GB). It has a `code-server` `ENTRYPOINT`, so you must pass `--entrypoint` to
-  `docker run`, and it is **missing the repo's declared deps** (`lightning`, `datasets`, …) —
-  install them once per container.
-- **GPU is unusable.** `docker run --gpus all` fails with
-  `nvidia-container-cli: initialization error: ... libnvidia-ml.so.1: file too short`, and
-  `torch.cuda.is_available()` is `False`. Two independent causes: the host driver (465.89)
-  predates WSL2 CUDA passthrough, and the GTX 960M is Maxwell `sm_50`, no longer supported by
-  modern PyTorch wheels.
-- **CPU works.** Both `AlexNetLightning` and `GoogLeNetLightning` complete a real
-  `Trainer.fit()` on CPU. Use small `--train_samples` / `--batch_size` / `max_epochs`.
+**First command of every session:**
+
+```bash
+python probes/check_hardware.py     # verdict: GPU_OK | CPU_ONLY | GPU_BROKEN | HOST_ONLY
+```
+
+Read [AGENT_INSTRUCTIONS.md §3–§4](./AGENT_INSTRUCTIONS.md) for how to get to `GPU_OK`.
+The image is built from `Dockerfile.gpu` in this repo, so it works on GPU and CPU-only
+hosts alike and needs no vendor registry.
+
+- **GPU works wherever the driver and wheel arch list allow it.** On the RTX A1000 6GB
+  Laptop GPU (driver 535.309.01, CUDA 12.2, `sm_86`) in `ppg-gpu:latest`, `torch 2.10.0+cu128`
+  reports `cuda avail True` and a real conv forward+backward through both networks passes.
+  The old "GPU is unusable" finding was specific to a WSL2 host whose driver (465.89)
+  predates CUDA passthrough and whose GTX 960M is `sm_50`, which modern wheels dropped.
+  Neither is a property of this repo.
+- **CPU works and is the fallback.** Both `AlexNetLightning` and `GoogLeNetLightning`
+  complete a real `Trainer.fit()` on CPU; the HANDOFF_003 §6.8 numbers reproduce
+  bit-exactly on this host. Use small `--train_samples` / `--batch_size` / `max_epochs`.
 - **`--shm-size` matters.** Docker's default `/dev/shm` is 64 MB; a multi-worker DataLoader
   carrying image batches exhausts it and dies with
-  `unable to allocate shared memory ... No space left on device`. Always start the container
-  with `--shm-size=4g`. `utils.runtime.count_available_workers` clamps `num_workers` to what
-  shm can actually support, so the failure degrades to `num_workers=0` instead of crashing.
+  `unable to allocate shared memory ... No space left on device`. Start the container with
+  `--shm-size=8g`. `utils.runtime.count_available_workers` clamps `num_workers` to what shm
+  can actually support, so the failure degrades to `num_workers=0` instead of crashing.
 - **Memory cap matters.** The default Docker Desktop limit (8 GB) is not enough for
   streaming-based dataset downloads; the process is OOM-killed. The parquet row-group path in
   `utils/datasets_utils.py` needs only ~0.5 GB, so this is no longer a blocker, but raising
   the limit still helps.
 - `pyproject.toml` is **not** the GPU problem — it declares plain `torch`/`torchvision` and
-  pip resolves a working build per machine. The blocker is the host driver.
-- All default paths are still container-only (`/workspace/...`), so nothing runs on the host
-  without path fixes (kanban `P1-4`).
+  pip resolves a working build per machine. On a CUDA host the blocker, if any, is the host
+  driver or the wheel's compiled arch list; `check_hardware.py` tells you which.
+- Default paths are repo-relative via `utils.runtime.repo_root()`, so runs work in-container
+  and on the host (`P1-4` closed).
 
-Plan training work against the container on **CPU**. Treat a CUDA machine as an optional
-accelerator, not a prerequisite.
+Plan training work on whatever `check_hardware.py` reports. Do not assume either device
+based on this document.
