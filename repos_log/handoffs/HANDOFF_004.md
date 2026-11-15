@@ -271,6 +271,63 @@ The pattern across all three: **a document that mixes states stops being actiona
 chapters mixed one agent's batch with the shared board; the backlog mixed done with to-do. The
 fix is the same each time — one place per state, and anything that can be checked is checked.
 
+### 3.15 `--smoke` was the only argument, and nothing enforced that
+
+While checking that the argument contract still held, I ran `python AlexNet/train_final.py
+--bogus`. It exited **0** and printed the full-run banner (`Chance-level accuracy for 64
+classes is 1.56%`) — it had started a real training run.
+
+Both scripts tested their single flag with membership rather than parsing:
+
+```python
+smoke = "--smoke" in sys.argv[1:]
+```
+
+Anything unrecognised is simply not `"--smoke"`, so it is discarded and the script proceeds
+with the full `CONFIG`. The comment above that line claimed `--smoke` was "intentionally the
+only accepted argument", and it was true of the *intent* and false of the *code*. The cost
+asymmetry is what makes it worth fixing: a mistyped `--smok` does not fail, it silently runs
+the multi-hour experiment, and the RESULT block still prints — so the only signal that
+anything went wrong is that the numbers look nothing like a smoke test. A flag that does
+nothing is worse than a missing flag, because it is believed.
+
+Fixed with `utils/runtime.validate_final_args()`, shared by both scripts so the two cannot
+drift apart. It rejects anything outside `("--smoke",)` with exit 1, naming the offenders and
+pointing at `CONFIG` / `trainer train --set` for the person who genuinely wanted to override
+something. Note the deliberate choice of `SystemExit` over `argparse`: these scripts must stay
+parameterless deliverables, and pulling in `argparse` would advertise a flag surface that does
+not exist.
+
+### 3.16 Reproduction is holding up under repeated runs
+
+Re-running `AlexNet/train_final.py --smoke` on GPU after the argument-contract change gave
+`train_loss = 2.6044`, `train_acc = 6.2500`, `val_loss = 2.4137`, `val_acc = 8.3333` —
+byte-identical to §6.2. That is the third independent reproduction of these numbers (HANDOFF_003
+on a WSL2 CPU host, HANDOFF_004 §6.1 forced-to-CPU on this host, §6.2 on GPU here), across two
+physically different machines and two devices.
+
+### 3.17 Evidence cited as "HANDOFF_004 §6.4" was not usable evidence
+
+The owner pointed out that the kanban's `DONE` rows cited handoff *sections* as their evidence
+(`Evidence: HANDOFF_004 §6.4`). That is an instruction to read an ~800-line document to check one
+number, and it is the same class of defect as §3.14: a document that mixes states stops being
+actionable. A handoff mixes narrative, decisions, and raw proof, so verifying a claim means
+loading all three.
+
+Fixed by extracting the proof into `repos_log/evidences/` — one self-contained file per experiment,
+append-only `E<NNN>` IDs, a uniform metadata header (Status / Cards / Command / Host / First
+recorded), and an `INDEX.md` keyed by card. The kanban's `DONE` table gained a first-class
+**Evidence** column, so "is this actually done?" is answerable from the board plus one small file.
+
+Two rules worth keeping:
+
+- **Superseded evidence is kept, not deleted.** `E004` and `E005` record the one-host GPU
+  measurements that misled the repo for three handoffs. Deleting them would delete the reason the
+  `P2-19` rule exists, and the next agent would have to rediscover the failure mode from scratch.
+- **State what the evidence does not show.** `E021` proves the mixed-precision GPU path
+  *executes*; it does not prove convergence. Nearly every misread number in this repo's history
+  (`P2-17`, the HANDOFF_003 smoke readings) came from a claim being read past what it supports.
+
 ---
 
 ## 4. Code changes
@@ -282,6 +339,7 @@ fix is the same each time — one place per state, and anything that can be chec
 | `Dockerfile.gpu` | Portable CUDA/CPU image. No `nscacert.crt`, no `code-server`, no vendor registry. `PIP_BREAK_SYSTEM_PACKAGES=1`; editable install so the bind mount wins; ends with an import gate for every declared dependency so a missing dep fails the **build** (this is how `P2-12` happened). |
 | `probes/check_hardware.py` | The replacement for the stale prose rule. First command of every session. Verdicts `GPU_OK` / `CPU_ONLY` / `GPU_BROKEN` / `HOST_ONLY`; exit 2 only for `GPU_BROKEN`. Checks driver vs CUDA runtime, docker, container toolkit, CDI specs, `/dev/shm`, CPU count, versions, wheel arch list vs device capability, bf16, VRAM, and a real conv fwd+bwd through both networks. |
 | `probes/check_learn.py` | The missing middle: real cached images, real dataset and samplers, enough steps to move. Sweeps {model} × {device} × {cache} and prints one table. |
+| `repos_log/evidences/` (28 files + `INDEX.md`) | One self-contained file per evidence piece — command, host, verbatim output, interpretation, and what the result does *not* show. Append-only `E<NNN>` IDs. Extracted so a `DONE` card can be verified without reading a handoff (§3.17). |
 
 **Rewritten**
 
@@ -354,6 +412,17 @@ Determinism notes for anyone checking the numbers:
 ---
 
 ## 6. Evidence
+
+> **These sections are the narrative record. The canonical, citable copies now live in
+> [`evidences/`](../evidences/INDEX.md)** — one file per experiment, with the command, host and
+> verbatim output. If you are verifying a card, open the `E<NNN>` file the card links; you do not
+> need to read this section. The mapping is: §6.1→[E020](../evidences/E020-cpu-smoke-bit-exact-parity.md),
+> §6.2→[E021](../evidences/E021-gpu-smoke-runs.md), §6.3→[E022](../evidences/E022-overfit-one-batch-gpu.md),
+> §6.4→[E023](../evidences/E023-learning-matrix-both-devices-both-caches.md),
+> §6.5→[E024](../evidences/E024-canonical-subset-correct-cache-key.md),
+> §6.6→[E025](../evidences/E025-label-image-alignment-through-sampler.md),
+> §6.7→[E026](../evidences/E026-parquet-resume-exact.md),
+> §6.8→[E027](../evidences/E027-hardware-probe-gpu-ok.md).
 
 ### 6.1 CPU experiment confirmed — bit-exact against HANDOFF_003 §6.8
 
@@ -687,6 +756,19 @@ box — which is how "GPU is unusable" survived three sessions of successful smo
 **Docs.** §3, §4, §6, §7 of `AGENT_INSTRUCTIONS.md` and `goal.md`'s "Environment reality check"
 rewritten hardware-agnostic. §6 is now a portable procedure plus a **per-host table you append
 to**, because "it works here" was written as a universal rule twice now.
+
+**Process.** `repos_log/evidences/` — 28 evidence files + `INDEX.md`, one self-contained file per
+experiment (command, host, verbatim output, and what the result does *not* show). The kanban's
+`DONE` table gained an **Evidence** column, and `AGENT_INSTRUCTIONS.md` gained §2.4 plus a working
+rule: a card may not cite a handoff section as its evidence, because that forces the reviewer to
+read an ~800-line document to check one number. `KANBAN.md` is also now exactly four chapters
+(`TODO` / `IN PROGRESS` / `DONE` / `BACKLOG / IDEAS`) with no per-handoff sub-tables, and every
+`IN PROGRESS` card carries an explicit **Still missing:** clause.
+
+**Argument contract (`P2-24`).** Both `train_final.py` files tested their single flag with
+`"--smoke" in sys.argv[1:]`, so an unknown argument was silently discarded and the script fell
+through to the *full* `CONFIG` — `python AlexNet/train_final.py --bogus` exited 0 having started a
+real training run. Now `utils/runtime.validate_final_args()` rejects anything else with exit 1.
 
 ## Evidence
 

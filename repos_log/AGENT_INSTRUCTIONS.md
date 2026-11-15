@@ -18,9 +18,12 @@ irreversible.
 | 2 | [goal.md](./goal.md) | Mission, scope, definition of done, ground rules |
 | 3 | [KANBAN.md](./KANBAN.md) | **Live** state — what is done, in flight, and free |
 | 4 | `handoffs/HANDOFF_<NNN>.md` — **the highest number only** | Immediate context from your predecessor |
+| 5 | `evidences/` — **only the files a card links to** | Raw proof: command, host, output. Read one file, not the folder |
 
 **Do not read the whole `handoffs/` directory.** If you genuinely need older history, `grep`
-for a specific card ID rather than reading files end to end.
+for a specific card ID rather than reading files end to end. The same applies to `evidences/`:
+it is a lookup table keyed by card, not a narrative — open the specific `E<NNN>` file a card
+cites and nothing else.
 
 Before touching anything, confirm the card you picked is still `TODO` and unowned.
 
@@ -60,9 +63,34 @@ This is the collaboration contract with the human:
 
 - Progressive number, **never reuse a number**, never edit an older handoff.
 - Write the handoff bit by bit, so that even if your session is prematurely terminated, you have something written down
-- Include the *evidence*: the command you ran and the output that proves the card is done.
 - Record failures and dead ends too — they save the next agent hours.
 - State your **assumptions** explicitly if you resolved any ambiguity yourself.
+- The handoff is for **narrative and decisions**. Raw proof goes in `evidences/` (§2.4); the
+  handoff links to it rather than being the only place it exists.
+
+### 2.4 Evidence files — `repos_log/evidences/`
+
+Every claim that a card is done must be checkable **without reading a handoff**. A handoff is
+600–800 lines; if a `DONE` row says "Evidence: HANDOFF_004 §6.4", the next agent has to load the
+whole document to verify one number, and the number is on page six. So evidence gets its own file.
+
+- **One evidence piece = one file.** Never merge two experiments into one file.
+- **ID is `E` + three digits, append-only.** Never renumber, never reuse a retired ID; new evidence
+  takes the next free number. Filename `E<NNN>-<kebab-case-summary>.md`.
+- **Add a row to [`evidences/INDEX.md`](./evidences/INDEX.md)** — the index is how anyone finds
+  evidence by card instead of by guesswork.
+- **Every file starts with the same metadata table:** Status, Cards, Command, Host, First recorded.
+  The `Command` must be copy-pasteable. If you cannot reproduce it, it is an anecdote, not evidence.
+- **Raw output goes in fenced blocks verbatim.** Interpretation goes *below* the block, never inside
+  it. Never fill in a number before the run has finished — if you correct one later, add a
+  correction note rather than silently editing.
+- **Superseded evidence stays**, marked `SUPERSEDED` in **Status**, with a pointer to what replaced
+  it and why the old claim was wrong. Deleting it destroys the record of how the repo was misled
+  (`E004`/`E005` are kept precisely for that reason).
+- **A `DONE` card links its evidence file in the kanban's Evidence column.** A `DONE` row whose
+  evidence link is broken, or which cites only a handoff section, is not done.
+- State what the evidence does **not** show. `E021` proves the GPU path *executes*; it does not
+  prove convergence. Most arguments in this repo have gone wrong at exactly this seam.
 
 ---
 
@@ -73,7 +101,7 @@ document.**
 
 > **The single most important rule in this file:** agents run on *different machines*. What is
 > true about the hardware on one host is not true on another. §4 explains why, and
-> [`probes/check_hardware.py`](./probes/check_hardware.py) is how you find out where you are.
+> [`probes/check_hardware.py`](../probes/check_hardware.py) is how you find out where you are.
 > **Run the probe before you decide anything about CPU vs GPU.**
 
 ### 3.0 First command of every session — the hardware probe
@@ -268,8 +296,11 @@ complete a `Trainer.fit()` on CPU, so a CPU-only agent is not blocked, merely sl
 
 ## 5. Working rules
 
-1. **Evidence over assertion.** Never claim a model "trains" without a log/metric excerpt in
-   your handoff. Run it; paste the output.
+1. **Evidence over assertion — and evidence lives in its own file.** Never claim a model
+   "trains" without the command and the raw output that prove it. Put that in a file under
+   `repos_log/evidences/` (§2.4), not in your handoff: a `DONE` card that cites only
+   `HANDOFF_004 §6.4` forces the next agent to read an ~800-line document to check one number.
+   Run it; paste the output; link the file from the card's **Evidence** column.
 2. **Reproduce before you fix.** Confirm the bug exists, then fix it, then confirm it is gone.
 3. **Move kanban cards; don't invent duplicates.** `KANBAN.md` has **exactly four
    chapters — `TODO`, `IN PROGRESS`, `DONE`, `BACKLOG / IDEAS` — and no others.** Do not add a
@@ -279,7 +310,7 @@ complete a `Trainer.fit()` on CPU, so a CPU-only agent is not blocked, merely sl
    renumber existing cards. `BACKLOG / IDEAS` is for unscheduled ideas, not cards.
 4. **An `IN PROGRESS` card must name what is still missing.** Appending an "update" to a card
    is not progress and is not a way to close it. Either its acceptance criteria are met and
-   evidence is in a handoff (move it to `DONE`), or they are not — in which case the card
+   the evidence file exists (move it to `DONE`), or they are not — in which case the card
    carries an explicit **Still missing:** clause. A card parked in `IN PROGRESS` with no gap
    stated will be read as nearly-done by the next agent, and it usually is not.
 5. **`BACKLOG / IDEAS` holds only unscheduled work.** It is a list of things still to do, not a
