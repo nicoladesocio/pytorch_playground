@@ -362,12 +362,13 @@ section is split: a procedure that is the same everywhere, and a per-host table 
 3. Test push permission *without* pushing:
    ```bash
    git push --dry-run origin HEAD:<branch>
+   env -u GH_TOKEN -u GITHUB_TOKEN git push --dry-run origin HEAD:<branch>
    ```
-   A `403 Permission denied` here is decisive — it means the identity behind your
-   credentials cannot write, and no amount of remote-juggling fixes it. Do not loop
-   through remotes hoping one works.
-4. If the dry run is clean, push and open the PR.
-5. If it is not, **push is not available to you.** Do the fallback in §6.3. Never merge
+   A `403 Permission denied` from **both** is decisive — the identity behind your credentials
+   cannot write, and no amount of remote-juggling fixes it. Do not loop through remotes hoping
+   one works. A `403` from only one of them is not a permission problem, it is step 2.
+4. If either dry run is clean, push with that environment and open the PR.
+5. If neither is, **push is not available to you.** Do the fallback in §6.3. Never merge
    to `main` yourself, and never ask for a merge — that is the human's call.
 
 ### 6.2 Per-host auth facts
