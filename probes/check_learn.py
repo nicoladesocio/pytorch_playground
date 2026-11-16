@@ -81,11 +81,21 @@ def load_model_module(dir_name, module_name):
 
 
 def build_batch(cache, classes, batch, image_size, seed):
-    """One fixed real batch: the same images and labels for every cell in the matrix."""
+    """One fixed real batch: the same images and labels for every cell in the matrix.
+
+    Returns ``(pils, y, K, target_classes)``. The chosen rows are decoded to PIL RGB
+    **once** and the caller applies whichever transform it needs, so the eval and train
+    arms of the `P2-15` A/B are guaranteed to see the same 32 images -- the only
+    difference between them is the transform. Re-decoding through the HF dataset on
+    every step would make the train arm measure JPEG decode speed rather than
+    augmentation.
+
+    ``image_size`` is not used here any more; it belongs to the transform, which the
+    caller owns. It is kept in the signature because callers pass it positionally.
+    """
     from datasets import load_from_disk
 
     from utils.datasets_utils import choose_target_classes, create_subset_sampler
-    from custum_datasets.imagenet_subset_dataset import ImageNetSubsetDataset
 
     train = load_from_disk(os.path.join(cache, "train"))
     val = load_from_disk(os.path.join(cache, "validation"))
@@ -93,33 +103,83 @@ def build_batch(cache, classes, batch, image_size, seed):
                                     val_dataset=val)
     sampler, target_classes = create_subset_sampler(
         train, max_num_classes=classes, target_classes=targets, seed=seed)
-    ds = ImageNetSubsetDataset(train, image_size=image_size, is_training=False,
-                               target_classes=target_classes)
 
-    # Freeze the sampler order so CPU and GPU cells train on identical pixels.
-    indices = list(sampler)[:batch]
-    imgs, labels = [], []
+    # The sampler draws from the *global* torch RNG, so the caller must have seeded it
+    # (see main()). list(sampler) is called exactly once per cache -- calling it per arm
+    # would draw a different 32 images for each arm and silently turn the A/B into a
+    # comparison of two different batches.
+    indices = [int(i) for i in list(sampler)[:batch]]
+
+    pils = []
     for idx in indices:
-        img, lbl = ds[int(idx)]
-        imgs.append(img)
-        labels.append(lbl)
-    x = torch.stack(imgs)
-    y = torch.tensor(labels, dtype=torch.long)
-    n_classes = len(target_classes)
-    del train, val, ds
-    return x, y, n_classes
+        raw = train[idx]["image"]
+        if isinstance(raw, dict) or isinstance(raw, (bytes, bytearray)):
+            payload = raw["bytes"] if isinstance(raw, dict) else raw
+            import io
+            from PIL import Image as PILImage
+            pils.append(PILImage.open(io.BytesIO(payload)))
+        else:
+            pils.append(raw)
+    pils = [p.convert("RGB") for p in pils]
+
+    # Labels come from the same remapping the training path uses, so the probe and
+    # train.py agree on what index a class has.
+    class_to_idx = {c: i for i, c in enumerate(target_classes)}
+    y = torch.tensor([class_to_idx[train[i]["label"]] for i in indices], dtype=torch.long)
+
+    del train, val
+    return pils, y, len(target_classes), target_classes
 
 
-def run_cell(name, make, x, y, K, device, steps, lr):
+def make_arm_transform(cache, target_classes, image_size, arm):
+    """The transform for one arm, taken from the real dataset class.
+
+    Using ``ImageNetSubsetDataset``'s own ``self.transform`` (rather than rebuilding a
+    Compose here) is the point: the probe then measures the transform the training run
+    actually applies, and cannot drift from it.
+    """
+    from datasets import load_from_disk
+
+    from custum_datasets.imagenet_subset_dataset import ImageNetSubsetDataset
+
+    train = load_from_disk(os.path.join(cache, "train"))
+    ds = ImageNetSubsetDataset(train, image_size=image_size,
+                               is_training=(arm == "train"),
+                               target_classes=target_classes)
+    transform = ds.transform
+    del train
+    return transform
+
+
+def run_cell(name, make, x, y, K, device, steps, lr, pils=None, transform=None,
+             seed=42):
+    """Overfit one fixed batch.
+
+    When ``pils``/``transform`` are given the batch is re-augmented from the original
+    PIL images at every step (the training arm); otherwise the fixed tensor ``x`` is
+    reused verbatim (the eval arm).
+    """
+    # Seed *before* the network is constructed. It used to be seeded after `make()`,
+    # so the initial weights came from whatever RNG state the previous cell left
+    # behind: the same command gave PASS and FAIL on different runs of the same cell,
+    # and the sweep was not reproducible.
+    torch.manual_seed(seed)
+    if device != "cpu":
+        torch.cuda.manual_seed_all(seed)
     net = make().to(device)
     net.train()
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     chance = chance_loss(name, K)
-    xc, yc = x.to(device), y.to(device)
+    augmented = pils is not None
+    if not augmented:
+        xc, yc = x.to(device), y.to(device)
 
     first = last = None
     t0 = time.time()
     for step in range(1, steps + 1):
+        if augmented:
+            xc = torch.stack([transform(p) for p in pils]).to(device)
+            yc = y.to(device)
         opt.zero_grad(set_to_none=True)
         if name == "GoogLeNet":
             out, aux2, aux1 = net(xc)
@@ -138,10 +198,19 @@ def run_cell(name, make, x, y, K, device, steps, lr):
         if not math.isfinite(last):
             return {"status": "NaN", "chance": chance, "first": first, "last": last,
                     "seconds": time.time() - t0}
+
+    # Report the per-sample loss distribution, not just the mean. The mean is what the
+    # pass rule uses (it is the documented rule, and it is what `goal.md`'s definition
+    # of done is written against), but on a 32-image batch a single sample the network
+    # refuses to fit contributes its whole loss to that mean: a cell that has memorised
+    # 31 of 32 images reads as loss 3.41 / acc 0.97, which looks like a failure and is
+    # not one. median + max make that visible instead of mysterious.
+    per = F.cross_entropy(out, yc, reduction="none").detach()
     acc = (out.argmax(1) == yc).float().mean().item()
     return {
         "status": "PASS" if last < chance * 0.6 else "FAIL",
         "chance": chance, "first": first, "last": last, "grad": grad, "acc": acc,
+        "median": per.median().item(), "max": per.max().item(),
         "seconds": time.time() - t0,
     }
 
@@ -159,7 +228,23 @@ def main():
                     help="keep >=128 or GoogLeNet's aux heads collapse (P2-16)")
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--arm", default="eval", choices=["eval", "train", "both"],
+                    help="eval = fixed pixels (CenterCrop); train = re-augment the same "
+                         "images every step (Resize256+RandomCrop+flip+ColorJitter). "
+                         "'both' runs the P2-15 A/B on identical images.")
+    ap.add_argument("--is_training", action="store_true",
+                    help="shorthand for --arm train")
     args = ap.parse_args()
+    if args.is_training:
+        args.arm = "train"
+
+    # Seed before anything consumes the RNG. build_batch() calls list(sampler) on a
+    # WeightedRandomSampler, which draws from the *global* torch RNG -- so without this
+    # the 32 images the whole sweep memorises were re-drawn on every invocation and
+    # `--seed` did not actually pin the batch. A cell could then pass and fail between
+    # runs for a reason that has nothing to do with the network.
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
 
     if args.image_size < 128:
         print(f"WARNING: image_size={args.image_size} collapses GoogLeNet's aux heads "
@@ -193,39 +278,58 @@ def main():
     print(f"caches:  {[os.path.basename(c) for c in caches]}")
 
     rows = []
+    arms = ["eval", "train"] if args.arm == "both" else [args.arm]
     for cache in caches:
         tag = os.path.basename(cache)
-        # Build the batch once per cache on CPU so every device sees identical pixels.
-        x, y, K = build_batch(cache, args.classes, args.batch, args.image_size, args.seed)
-        print(f"\n=== {tag}  ({x.shape[0]} images, {K} classes, "
-              f"{tuple(x.shape[2:])}, seed={args.seed}) ===")
-        for name in ("AlexNet", "GoogLeNet"):
-            for device in devices:
-                make = lambda K=K, name=name: makers[name](K, args.image_size)
-                r = run_cell(name, make, x, y, K, device, args.steps, args.lr)
-                r.update(model=name, device=device, cache=tag)
-                rows.append(r)
-                print(f"  {name:<10} {device:<5}  chance {r['chance']:.4f}   "
-                      f"{r['first']:.4f} -> {r['last']:.4f}   "
-                      f"acc {r.get('acc', float('nan')):.3f}   "
-                      f"{r['seconds']:5.1f}s   {r['status']}")
+        # The batch is built ONCE per cache, outside the arm loop. Building it per arm
+        # re-drew the sampler and gave each arm a different 32 images, which turns the
+        # P2-15 A/B into a comparison of two different batches -- exactly the mistake
+        # this probe was written to avoid.
+        pils, y, K, target_classes = build_batch(
+            cache, args.classes, args.batch, args.image_size, args.seed)
+        for arm in arms:
+            transform = make_arm_transform(cache, target_classes, args.image_size, arm)
+            x = torch.stack([transform(p) for p in pils])
+            print(f"\n=== {tag}  arm={arm}  ({x.shape[0]} images, {K} classes, "
+                  f"{tuple(x.shape[2:])}, seed={args.seed}) ===")
+            for name in ("AlexNet", "GoogLeNet"):
+                for device in devices:
+                    make = lambda K=K, name=name: makers[name](K, args.image_size)
+                    r = run_cell(name, make, x, y, K, device, args.steps, args.lr,
+                                 pils=(pils if arm == "train" else None),
+                                 transform=transform, seed=args.seed)
+                    r.update(model=name, device=device, cache=tag, arm=arm)
+                    rows.append(r)
+                    print(f"  {name:<10} {device:<5} {arm:<6} "
+                          f"chance {r['chance']:.4f}   "
+                          f"{r['first']:.4f} -> {r['last']:.4f}   "
+                          f"med {r.get('median', float('nan')):.4f} "
+                          f"max {r.get('max', float('nan')):.3f}   "
+                          f"acc {r.get('acc', float('nan')):.3f}   "
+                          f"{r['seconds']:5.1f}s   {r['status']}")
+            del x, transform
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        del pils, y
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    print("\n" + "=" * 78)
-    print(f"{'model':<11}{'device':<8}{'cache':<44}{'result'}")
-    print("-" * 78)
+    print("\n" + "=" * 92)
+    print(f"{'model':<11}{'device':<8}{'arm':<7}{'cache':<40}{'result'}")
+    print("-" * 92)
     for r in rows:
-        print(f"{r['model']:<11}{r['device']:<8}{r['cache'][:43]:<44}{r['status']}")
-    print("=" * 78)
+        print(f"{r['model']:<11}{r['device']:<8}{r['arm']:<7}"
+              f"{r['cache'][:39]:<40}{r['status']}")
+    print("=" * 92)
 
     failed = [r for r in rows if r["status"] != "PASS"]
     if failed:
         print(f"\nOVERALL: {len(failed)}/{len(rows)} cell(s) did not beat chance: "
-              + ", ".join(f"{r['model']}/{r['device']}/{r['cache']}" for r in failed))
+              + ", ".join(f"{r['model']}/{r['device']}/{r['arm']}/{r['cache']}"
+                          for r in failed))
         return 1
     print(f"\nOVERALL: all {len(rows)} cells learned -- both networks learn from real "
-          "images on every device tested, on every cached subset.")
+          "images on every device and arm tested, on every cached subset.")
     return 0
 
 

@@ -47,19 +47,36 @@ open the handoff it came from. Handoffs are for narrative and decisions; this fo
 | [E020](./E020-cpu-smoke-bit-exact-parity.md) | CPU smoke runs reproduce bit-exactly on a 2nd machine | CONFIRMED | `P0-5`, `P2-19` |
 | [E021](./E021-gpu-smoke-runs.md) | GPU smoke runs: mixed precision executes on both models | CONFIRMED (executes only) | `P3-13`, `P2-22` |
 | [E022](./E022-overfit-one-batch-gpu.md) | Overfit-one-batch on GPU: both architectures learn | CONFIRMED | `P2-11`, `P2-23` |
-| [E023](./E023-learning-matrix-both-devices-both-caches.md) | Learning matrix: real images, both devices, both caches (8/8) | CONFIRMED | `P2-21`, `P2-15` |
+| [E023](./E023-learning-matrix-both-devices-both-caches.md) | Learning matrix: real images, both devices, both caches (8/8) | CONFIRMED — **unverified**: produced by `check_learn.py` before the two RNG bugs in [E032](./E032-check-learn-probe-bugs-and-lr-sensitivity.md) were fixed (`P2-29`) | `P2-21`, `P2-15` |
 | [E024](./E024-canonical-subset-correct-cache-key.md) | Canonical subset at the correct `seed=42` cache key | CONFIRMED | `P1-8` |
 | [E025](./E025-label-image-alignment-through-sampler.md) | Label/image alignment through the real sampler | CONFIRMED | `P2-18` |
 | [E026](./E026-parquet-resume-exact.md) | Parquet download resume is byte-exact | CONFIRMED | `P3-11` |
 | [E027](./E027-hardware-probe-gpu-ok.md) | Hardware probe verdict: `GPU_OK` | CONFIRMED | `P2-19` |
 | [E028](./E028-argument-contract-rejects-unknown-args.md) | `train_final.py` rejects unknown arguments | CONFIRMED → fixed | `P2-24` |
+| [E029](./E029-augmentation-ab-both-arms-identical-images.md) | Augmentation A/B: both arms on identical images; train arm memorises at 227 px | **SUPERSEDED** by E032 — the two arms did not share a batch and the batch was unseeded | `P2-15` (reopened), `P2-21` |
+| [E030](./E030-googlenet-converged-run.md) | GoogLeNet converges: `val_acc` 34.6 % vs 1.56 % chance | CONFIRMED | `P2-14`, `P2-11`, `P2-10` |
+| [E031](./E031-alexnet-adam-converges-sgd-pinned-at-chance.md) | AlexNet: Adam converges, SGD pinned at chance by `gradient_clip_val=1.0` | CONFIRMED | `P2-14`, `P2-11`, `P2-12`, `P2-25` |
+| [E032](./E032-check-learn-probe-bugs-and-lr-sensitivity.md) | `check_learn.py` had two RNG bugs; its verdict is dominated by its own default `lr` | CONFIRMED | `P2-15`, `P2-28`, `P2-29`, `P2-21` |
 
 ## Reading shortcuts
 
-- **"Can these networks learn?"** → [E023](./E023-learning-matrix-both-devices-both-caches.md)
-  (real images) and [E014](./E014-overfit-one-batch-cpu.md) /
-  [E022](./E022-overfit-one-batch-gpu.md) (backprop only). None of these is convergence —
-  `P2-14` is still open.
+- **"Can these networks learn?"** → [E030](./E030-googlenet-converged-run.md) and
+  [E031](./E031-alexnet-adam-converges-sgd-pinned-at-chance.md) — real training runs, both above
+  chance. [E023](./E023-learning-matrix-both-devices-both-caches.md) (real images, memorisation) and
+  [E014](./E014-overfit-one-batch-cpu.md) / [E022](./E022-overfit-one-batch-gpu.md) (backprop only)
+  are the weaker, earlier forms of the same answer.
+- **"Why did earlier runs look flat?"** → [E030](./E030-googlenet-converged-run.md): an epoch on the
+  canonical cache is 4 153 samples = 65 steps at batch 64, so 18 "epochs" was ~1 170 optimiser
+  steps. `--train_samples_per_epoch` is the knob.
+- **"Is augmentation stopping learning?"** → unresolved. [E029](./E029-augmentation-ab-both-arms-identical-images.md)
+  said no, but it is **superseded**: its two arms were fed different batches
+  ([E032](./E032-check-learn-probe-bugs-and-lr-sensitivity.md)). `P2-15` is back in TODO.
+- **"Can I trust a `check_learn.py` PASS/FAIL?"** → read
+  [E032](./E032-check-learn-probe-bugs-and-lr-sensitivity.md) first. The probe's default `lr=3e-3`
+  sits in a bad spot: the same batch/seed flips PASS→FAIL on `lr` alone (`1e-3` → 16/16 PASS,
+  `3e-3` → 4/8, `1e-2` → 3/16). Never close a card on one unseeded `check_learn` run.
+- **"Why is AlexNet's SGD arm at chance?"** → [E031](./E031-alexnet-adam-converges-sgd-pinned-at-chance.md):
+  init grad norm 26.9 against `gradient_clip_val=1.0` scales every step by 0.037.
 - **"Is the GPU usable?"** → run `python probes/check_hardware.py`; see
   [E027](./E027-hardware-probe-gpu-ok.md) for what a passing verdict looks like. Do **not** read
   [E004](./E004-host-cannot-train-environment.md) or

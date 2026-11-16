@@ -110,6 +110,13 @@ def build_arg_parser():
                         help="Fraction (0..1] or count of val batches per epoch -- for smoke tests")
     parser.add_argument("--log_grad_norms", action="store_true", default=True,
                         help="Log aggregate gradient norm to TensorBoard every 50 steps")
+    parser.add_argument("--gradient_clip_val", type=float, default=1.0,
+                        help="Trainer gradient_clip_val. AlexNet's total gradient norm at "
+                             "initialisation is ~27, so the default 1.0 scales every step by "
+                             "~0.037. Adam is scale-invariant so this is harmless there, but "
+                             "it pins SGD at chance: raise it above the init norm (or pass a "
+                             "value <= 0 to disable clipping) before judging SGD. See "
+                             "repos_log/evidences/E031-alexnet-adam-converges-sgd-pinned-at-chance.md")
     return parser
 
 
@@ -227,7 +234,8 @@ def main(argv=None):
         accelerator=accelerator,
         devices=devices,
         precision=args.precision,
-        gradient_clip_val=1.0,
+        gradient_clip_val=(args.gradient_clip_val
+                           if args.gradient_clip_val and args.gradient_clip_val > 0 else None),
         accumulate_grad_batches=1,
         limit_train_batches=args.limit_train_batches,
         limit_val_batches=args.limit_val_batches,
