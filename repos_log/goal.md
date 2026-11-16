@@ -86,18 +86,23 @@ A model is considered **trained** when all of the following hold:
 7. `python <Model>/train_final.py` exists, takes no arguments, and reproduces the metrics
    recorded in the handoff that justified its `CONFIG`.
 
-## Current status (as of HANDOFF_002)
+## Current status (convergence updated as of HANDOFF_005)
 
 "Trainable?" = produces a **converged**, reproducible run, not merely a run that starts.
-Both models execute `Trainer.fit()` on CPU without error (HANDOFF_002); neither has converged.
+Both models execute `Trainer.fit()` on CPU without error (HANDOFF_002).
 
 | Model | Trainable? | Notes |
 |---|---|---|
-| GoogLeNet | Partially | Most stable path. Completes `Trainer.fit()` on CPU (HANDOFF_002). Uses bare top-level imports (`from inception import …`) that break package-style imports. |
-| AlexNet | No | Runs on CPU, but plateaus at `loss ≈ 6.9` (= `log(1000)`, random guessing) with vanishing gradients. Also has a `Trainer` block sitting outside its `__main__` guard, and a latent `256*6*6` classifier shape bug (`P2-13`). |
+| GoogLeNet | **Yes — converged once** | `val_acc` 4.58 % → 34.6 % against a 1.56 % chance level, `val_loss` 4.01 → 2.84, 64 classes, 227 px, GPU ([E030](./evidences/E030-googlenet-converged-run.md)). Needs `--train_samples_per_epoch 16384`; a default epoch is 65 steps and looks flat. |
+| AlexNet | **Yes — converged once, with Adam** | `val_acc` 4.58 % → 24.8 %, `val_loss` 4.03 → 3.11 ([E031](./evidences/E031-alexnet-adam-converges-sgd-pinned-at-chance.md)). Its SGD arm stays at chance because `gradient_clip_val=1.0` scales every step by 0.037 against an init gradient norm of 26.9 — that is a measurement about the clip, not a verdict on SGD (`P2-25`). |
 
-Neither model has ever produced a verified, reproducible converged run with committed
-evidence. See [KANBAN.md](./KANBAN.md) for the prioritised work.
+Both models have now produced a verified converged run with committed evidence, which is the
+half of "Trainable?" that had been open since HANDOFF_001. What is **not** yet met is the rest of
+the definition of done above: the converged runs were stopped early (epoch 36 / 12 of 60) so there
+is no full-length checkpoint, `val_acc` rests on 153 validation images (`P2-27`), the `CONFIG`
+throughput numbers are unmeasured at the batch sizes shipped (`P2-26`), and no run has been made
+reproducible end-to-end from `train_final.py` on the target hardware. See
+[KANBAN.md](./KANBAN.md) for the prioritised work.
 
 ## Ground rules for agents
 

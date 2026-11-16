@@ -422,7 +422,11 @@ python probes/check_hardware.py
 docker build -f Dockerfile.gpu -t ppg-gpu:latest .
 
 # 2. start the dev container
-docker run -d --name ppg-dev --gpus all --shm-size=8g \
+# --entrypoint bash is required: the image's CMD is /bin/bash, so without it the
+# trailing `-c "sleep infinity"` is treated as the executable and the container dies
+# with `exec: "-c": executable file not found in $PATH`. (§3.1 has the flag; this
+# block used to omit it and reproduce that error verbatim.)
+docker run -d --name ppg-dev --gpus all --shm-size=8g --entrypoint bash \
   -v "$REPO:/workspace" -w /workspace \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
   ppg-gpu:latest -c "sleep infinity"

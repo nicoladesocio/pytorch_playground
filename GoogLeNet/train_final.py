@@ -37,9 +37,21 @@ CONFIG = {
     "num_classes": 64,                      # chance level = 1/64 = 1.56%
     "image_size": 227,
 
+    # Epoch length. NOT the same knob as train_samples: 51200 is what was *downloaded*,
+    # and choose_target_classes() only keeps the 64 best-represented of the 1000 classes
+    # -- 4153 rows on the canonical cache, i.e. a default epoch is 65 steps at batch 64.
+    # HANDOFF_003's "plateaued after 18 epochs" was 18 x 65 = ~1170 optimiser steps, far
+    # too few to move the weights. Drawing 16384 per epoch (with replacement above the
+    # in-class count) is the value that produced the first converged run in this repo's
+    # history: val_acc 34.6% against a 1.56% chance level, val_loss 4.01 -> 2.84
+    # (repos_log/evidences/E030-googlenet-converged-run.md).
+    "train_samples_per_epoch": 16384,
+
     # Optimisation. Adam was the configuration that actually trained in this repo;
     # the paper's SGD+StepLR is available via --optimizer sgd on train.py, but the
     # baked-in recipe is the one that was observed to converge.
+    # CAVEAT: E030 measured lr=1e-4 at batch_size=64 on a 6 GB card. The 128 below is
+    # an unmeasured extrapolation -- lr was never swept at this batch size (P2-26).
     "max_epochs": 60,
     "optimizer": "adam",
     "lr": 1e-4,
@@ -87,6 +99,10 @@ SMOKE_OVERRIDES = {
     "eval_batch_size": 16,
     "num_workers": 2,
     "shuffle_buffer": 512,
+    # Back to one pass over the in-class samples. The point of the long epoch in CONFIG
+    # is to give a real run enough optimiser steps; a smoke test only has to execute,
+    # and 16384 samples at batch 16 would make it 1024 steps per epoch.
+    "train_samples_per_epoch": None,
     "swa": False,                           # SWA needs a long run to be meaningful
     "version_name": "googlenet_smoke",
 }
