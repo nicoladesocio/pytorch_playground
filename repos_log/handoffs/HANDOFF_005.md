@@ -455,4 +455,5 @@ Known and accepted gaps in *this* session's work:
   `GoogLeNet/train_final.py` (measured `CONFIG`), `repos_log/AGENT_INSTRUCTIONS.md`
   (`--entrypoint bash`), `repos_log/goal.md` (Current status only), `evidences/E029` (SUPERSEDED),
   `E030`, `E031`, `E032`, `evidences/INDEX.md`, `KANBAN.md`, `HANDOFF_005.md`
+- **PR:** https://github.com/nicoladesocio/pytorch_playground/pull/5 (opened, commit `c0c45b0`)
 - **Not merged.** Per `AGENT_INSTRUCTIONS.md` §2, the human merges.
