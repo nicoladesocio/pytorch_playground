@@ -33,7 +33,16 @@ CONFIG = {
     "dataset_name": "ILSVRC/imagenet-1k",   # gated: requires HF_TOKEN in the environment
     "cache_root": None,                     # None -> repo-relative Data/datasets
     "train_samples": 51200,                 # ~4% of the 1.28M train images
-    "val_samples": 2048,
+    # Validation pool size. create_eval_sampler() covers every in-class val sample
+    # exactly once, so val_acc is quantised in steps of 100/(in-class val images).
+    # At 2048 the canonical cache held only 153 in-class images -> 0.654% resolution
+    # (P2-27). 16384 gives 1030 in-class images -> 0.0971% resolution, measured by
+    # probes/check_val_pool.py and recorded in E036.
+    # CAVEAT: val_samples feeds choose_target_classes()'s min_val_count filter, so
+    # changing it changes WHICH 64 classes are chosen -- 8 of 64 differ between 2048
+    # and 16384. Accuracy numbers from the 2048 caches (E030, E031) are therefore NOT
+    # comparable with runs on this pool; re-baseline rather than comparing across.
+    "val_samples": 16384,
     "num_classes": 64,                      # chance level = 1/64 = 1.56%
     "image_size": 227,
 

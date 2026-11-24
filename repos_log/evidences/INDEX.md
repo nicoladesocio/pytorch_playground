@@ -55,8 +55,14 @@ open the handoff it came from. Handoffs are for narrative and decisions; this fo
 | [E028](./E028-argument-contract-rejects-unknown-args.md) | `train_final.py` rejects unknown arguments | CONFIRMED → fixed | `P2-24` |
 | [E029](./E029-augmentation-ab-both-arms-identical-images.md) | Augmentation A/B: both arms on identical images; train arm memorises at 227 px | **SUPERSEDED** by E032 — the two arms did not share a batch and the batch was unseeded | `P2-15` (reopened), `P2-21` |
 | [E030](./E030-googlenet-converged-run.md) | GoogLeNet converges: `val_acc` 34.6 % vs 1.56 % chance | CONFIRMED | `P2-14`, `P2-11`, `P2-10` |
-| [E031](./E031-alexnet-adam-converges-sgd-pinned-at-chance.md) | AlexNet: Adam converges, SGD pinned at chance by `gradient_clip_val=1.0` | CONFIRMED | `P2-14`, `P2-11`, `P2-12`, `P2-25` |
+| [E031](./E031-alexnet-adam-converges-sgd-pinned-at-chance.md) | AlexNet: Adam converges, SGD pinned at chance by `gradient_clip_val=1.0` | Measurements CONFIRMED; **causal claim superseded** by E033 | `P2-14`, `P2-11`, `P2-12`, `P2-25` |
 | [E032](./E032-check-learn-probe-bugs-and-lr-sensitivity.md) | `check_learn.py` had two RNG bugs; its verdict is dominated by its own default `lr` | CONFIRMED | `P2-15`, `P2-28`, `P2-29`, `P2-21` |
+| [E033](./E033-alexnet-sgd-grid-clip-init-and-budget-ruled-out.md) | AlexNet SGD: 12 arms across clip × lr × precision, plus two 7 680-step arms, all on chance; Adam control at the same budget leaves chance | CONFIRMED (negative) — **supersedes the causal claim in E031**; `P2-25` stays open | `P2-25`, `P2-12` |
+| [E034](./E034-alexnet-init-gradient-norms-span-1e4-googlenet-does-not.md) | AlexNet's per-tensor init gradient norms span 1.5 × 10⁴; GoogLeNet's span 6.3 × 10² | CONFIRMED | `P2-25`, `P2-12` |
+| [E035](./E035-alexnet-init-is-not-what-blocks-sgd.md) | The uniform `std=0.01` init is not what blocks SGD (memorises 3/4 fixed batches); `kaiming` is actively broken | CONFIRMED (negative) | `P2-25`, `P2-12` |
+| [E036](./E036-validation-pool-size-and-accuracy-resolution.md) | Validation is 153 images (0.654 %); `val_samples=16384` gives 1030 (0.0971 %) | CONFIRMED — `P2-27` resolved | `P2-27` |
+| [E037](./E037-lr-schedule-is-stepped-per-epoch-and-healthy.md) | The cosine schedule is stepped per **epoch** and the LR stays healthy — a source-reading theory, refuted by measurement | CONFIRMED (negative) | `P2-25` |
+| [E038](./E038-per-group-lr-sgd-sweep.md) | Per-group feature/head `lr` up to 100× does not rescue SGD (feature displacement saturates); neither do dropout off, `weight_decay=0`, or both | CONFIRMED (negative) | `P2-25` |
 
 ## Reading shortcuts
 
@@ -75,8 +81,27 @@ open the handoff it came from. Handoffs are for narrative and decisions; this fo
   [E032](./E032-check-learn-probe-bugs-and-lr-sensitivity.md) first. The probe's default `lr=3e-3`
   sits in a bad spot: the same batch/seed flips PASS→FAIL on `lr` alone (`1e-3` → 16/16 PASS,
   `3e-3` → 4/8, `1e-2` → 3/16). Never close a card on one unseeded `check_learn` run.
-- **"Why is AlexNet's SGD arm at chance?"** → [E031](./E031-alexnet-adam-converges-sgd-pinned-at-chance.md):
-  init grad norm 26.9 against `gradient_clip_val=1.0` scales every step by 0.037.
+- **"Why is AlexNet's SGD arm at chance?"** → **not** the clip. [E031](./E031-alexnet-adam-converges-sgd-pinned-at-chance.md)
+  said `gradient_clip_val=1.0` scales every step by 0.037; that causal claim is **superseded** —
+  clip off and clip=30 are also exactly at chance
+  ([E033](./E033-alexnet-sgd-grid-clip-init-and-budget-ruled-out.md)). **Eight** candidate causes
+  have since been ruled out by measurement: the clip and fp16 (E033), the step budget (E033's Adam
+  control and two 7 680-step arms), the `std=0.01` init
+  ([E035](./E035-alexnet-init-is-not-what-blocks-sgd.md)), the cosine schedule
+  ([E037](./E037-lr-schedule-is-stepped-per-epoch-and-healthy.md)), the 1.5 × 10⁴ gradient spread,
+  dropout and `weight_decay`
+  ([E038](./E038-per-group-lr-sgd-sweep.md)). The surviving suspect is the data: only 4 153 unique
+  in-class train images, and `train_acc` never exceeds 1.95 % in any SGD arm. `P2-25` is still open;
+  Adam remains the shipped optimiser, and a ninth optimiser-side variant is not worth running.
+- **"What `val_samples` should I use?"** → 16384. At the old 2048 the 64 chosen classes hold only
+  153 validation images, so every `val_acc` in the repo is a multiple of 0.654 %
+  ([E036](./E036-validation-pool-size-and-accuracy-resolution.md)). Note the pool size also changes
+  *which* 64 classes are chosen, so accuracy figures are not comparable across pools.
+- **"Before 'fixing' a schedule or an init from reading the source"** →
+  [E037](./E037-lr-schedule-is-stepped-per-epoch-and-healthy.md). A `CosineAnnealingLR(T_max=max_epochs)`
+  returned as a bare dict *looks* like a steps-vs-epochs units bug and is not one; and
+  [E035](./E035-alexnet-init-is-not-what-blocks-sgd.md) shows `kaiming_normal_(mode='fan_in')` makes
+  AlexNet's init **worse**, not better. Measure first.
 - **"Is the GPU usable?"** → run `python probes/check_hardware.py`; see
   [E027](./E027-hardware-probe-gpu-ok.md) for what a passing verdict looks like. Do **not** read
   [E004](./E004-host-cannot-train-environment.md) or

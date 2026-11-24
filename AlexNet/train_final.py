@@ -35,7 +35,17 @@ CONFIG = {
     "dataset_name": "ILSVRC/imagenet-1k",   # gated: requires HF_TOKEN in the environment
     "cache_root": None,                     # None -> repo-relative Data/datasets
     "train_samples": 51200,                 # ~4% of the 1.28M train images
-    "val_samples": 2048,
+    # Validation pool size. create_eval_sampler() covers every in-class val sample
+    # exactly once, so val_acc is quantised in steps of 100/(in-class val images).
+    # At 2048 the canonical cache held only 153 in-class images -> 0.654% resolution,
+    # which is coarser than most of the effects this repo has drawn conclusions from
+    # (P2-27). 16384 gives 1030 in-class images -> 0.0971% resolution, measured by
+    # probes/check_val_pool.py and recorded in E036.
+    # CAVEAT: val_samples feeds choose_target_classes()'s min_val_count filter, so
+    # changing it changes WHICH 64 classes are chosen -- 8 of 64 differ between 2048
+    # and 16384. Accuracy numbers from the 2048 caches (E030, E031) are therefore NOT
+    # comparable with runs on this pool; re-baseline rather than comparing across.
+    "val_samples": 16384,
     "num_classes": 64,                      # chance level = 1/64 = 1.56%
     "image_size": 227,                      # AlexNet paper; flatten size is derived
 
@@ -50,13 +60,23 @@ CONFIG = {
     "train_samples_per_epoch": 16384,
 
     # Optimisation. Adam is the recipe that was *observed* to converge (val_acc 24.8%
-    # against a 1.56% chance level, E031). The paper's SGD + StepLR is NOT baked in:
-    # train.py passes gradient_clip_val=1.0 and AlexNet's total gradient norm at
-    # initialisation is 26.9, so every SGD step is scaled by 0.037 -- 21 epochs of SGD
-    # lr=0.1 left train_acc at chance (4.16 +/- 0.01 val_loss, i.e. exactly ln(64)).
-    # That is a measurement about the clip, not a verdict on SGD. A fair SGD run needs
-    # the clip raised above the init norm first; see card P2-25 and AlexNet/train.py's
-    # --gradient_clip_val.
+    # against a 1.56% chance level, E031). The paper's SGD + StepLR is NOT baked in --
+    # and it is not a matter of raising the clip. E033 measured AlexNet's total gradient
+    # norm at init to be 26.7, so gradient_clip_val=1.0 does scale every SGD step by
+    # 0.037, but removing the clip entirely (and setting it to 30) leaves SGD exactly on
+    # chance: val_loss 4.170 against ln(64) = 4.1589. So the clip was never the cause and
+    # E031's attribution to it is superseded.
+    #
+    # Eight candidate causes of the chance-level SGD plateau have now been eliminated by
+    # measurement: the clip and fp16 overflow and the step budget (E033, including two
+    # 7680-step arms), the uniform std=0.01 init (E035 -- it memorises 3 of 4 fixed
+    # batches), the cosine schedule (E037 -- stepped per epoch, LR healthy), the 1.5e4
+    # init gradient spread (E038 -- per-group lr up to 100x does nothing), dropout
+    # (E038 -- all nn.Dropout replaced by nn.Identity), and weight_decay (E038 -- wd=0).
+    # In every arm train_acc never exceeds 1.95%, i.e. SGD fails to fit even its own
+    # training stream, so this is not a generalisation gap. What is left untested is the
+    # data: choose_target_classes() leaves only 4153 unique in-class train images.
+    # Card P2-25 stays open. Do not add a ninth optimiser-side variant.
     "max_epochs": 100,
     "optimizer": "adam",
     "lr": 3e-4,
