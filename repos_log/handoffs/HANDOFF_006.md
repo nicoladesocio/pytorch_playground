@@ -319,5 +319,5 @@ docker exec ppg-dev6 bash -lc 'cd /workspace && python probes/check_lr_schedule.
   `probes/check_sgd_lr_groups.py` (new), `probes/check_sgd_vs_init.py` (fixed),
   `AlexNet/train_final.py`, `GoogLeNet/train_final.py`, `evidences/E033`–`E038`,
   `evidences/E031-...md`, `evidences/INDEX.md`, `goal.md`, `KANBAN.md`, `HANDOFF_006.md`
-- **PR:** opened — see the URL in the final summary.
+- **PR:** https://github.com/nicoladesocio/pytorch_playground/pull/6 (opened, commit `d74a62d`)
 - **Not merged.** Per `AGENT_INSTRUCTIONS.md` §2, the human merges.
