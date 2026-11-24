@@ -39,16 +39,37 @@ CONFIG = {
     "num_classes": 64,                      # chance level = 1/64 = 1.56%
     "image_size": 227,                      # AlexNet paper; flatten size is derived
 
-    # Optimisation (SGD + StepLR, as in Krizhevsky et al. 2012)
+    # Epoch length. NOT the same knob as train_samples: 51200 is what was *downloaded*,
+    # and choose_target_classes() only keeps the 64 best-represented of the 1000 classes
+    # -- 4153 rows on the canonical cache, i.e. a default epoch is 65 steps at batch 64.
+    # HANDOFF_003's "plateaued after 18 epochs" was 18 x 65 = ~1170 optimiser steps, far
+    # too few to move the weights. Drawing 16384 per epoch (with replacement above the
+    # in-class count) is the value both converged runs used:
+    # repos_log/evidences/E030-googlenet-converged-run.md and
+    # repos_log/evidences/E031-alexnet-adam-converges-sgd-pinned-at-chance.md.
+    "train_samples_per_epoch": 16384,
+
+    # Optimisation. Adam is the recipe that was *observed* to converge (val_acc 24.8%
+    # against a 1.56% chance level, E031). The paper's SGD + StepLR is NOT baked in:
+    # train.py passes gradient_clip_val=1.0 and AlexNet's total gradient norm at
+    # initialisation is 26.9, so every SGD step is scaled by 0.037 -- 21 epochs of SGD
+    # lr=0.1 left train_acc at chance (4.16 +/- 0.01 val_loss, i.e. exactly ln(64)).
+    # That is a measurement about the clip, not a verdict on SGD. A fair SGD run needs
+    # the clip raised above the init norm first; see card P2-25 and AlexNet/train.py's
+    # --gradient_clip_val.
     "max_epochs": 100,
-    "lr": 0.01,
+    "optimizer": "adam",
+    "lr": 3e-4,
     "momentum": 0.9,
     "weight_decay": 5e-4,
     "lr_step_size": 30,
     "lr_gamma": 0.1,
+    "scheduler": "cosine",
 
     # Throughput on a "bigger GPU" PC. 96 fits comfortably in 10-12 GB at 227px with
     # bf16; raise to 128/192 on a 16-24 GB card and keep lr proportional.
+    # CAVEAT: E031 measured lr=3e-4 at batch_size=32 on a 6 GB card. 96 here is an
+    # unmeasured extrapolation -- lr was never swept at this batch size (P2-26).
     "batch_size": 96,
     "eval_batch_size": 128,
     "precision": "16-mixed",                # bf16/fp16 autocast -- the single biggest
@@ -83,6 +104,10 @@ SMOKE_OVERRIDES = {
     "eval_batch_size": 16,
     "num_workers": 2,
     "shuffle_buffer": 512,
+    # Back to one pass over the in-class samples. The point of the long epoch in CONFIG
+    # is to give a real run enough optimiser steps; a smoke test only has to execute,
+    # and 16384 samples at batch 16 would make it 1024 steps per epoch.
+    "train_samples_per_epoch": None,
     "version_name": "alexnet_smoke",
 }
 # ---------------------------------------------------------------------------
