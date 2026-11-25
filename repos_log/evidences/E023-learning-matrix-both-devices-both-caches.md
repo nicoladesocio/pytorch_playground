@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | CONFIRMED — 8/8 cells PASS |
+| **Status** | **SUPERSEDED by [E039](./E039-e023-learning-matrix-not-reproducible-across-seeds.md)** — the 8/8 headline is not reproducible as a property of the code. Re-run with the RNG-fixed probe over 3 seeds on the now-3-cache matrix: **34/36 cells PASS** (GoogLeNet 18/18, AlexNet 16/18), and the 2 failures land on different caches *and* different devices depending on the seed. The conclusion "both networks learn from real images" **stands**; the claim that `check_learn.py` can certify it at its default `lr=3e-3` does not. The measurements below were produced by the pre-E032 probe, whose `--seed` did not pin the batch. |
 | **Cards** | `P2-21`, `P2-15` (narrows it), `P2-11` (partial) |
 | **Command** | `python probes/check_learn.py --device both --steps 200` |
 | **Host** | RTX A1000 6GB Laptop GPU, torch 2.10.0+cu128, `ppg-dev` |

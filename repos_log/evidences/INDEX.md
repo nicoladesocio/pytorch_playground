@@ -63,6 +63,7 @@ open the handoff it came from. Handoffs are for narrative and decisions; this fo
 | [E036](./E036-validation-pool-size-and-accuracy-resolution.md) | Validation is 153 images (0.654 %); `val_samples=16384` gives 1030 (0.0971 %) | CONFIRMED — `P2-27` resolved | `P2-27` |
 | [E037](./E037-lr-schedule-is-stepped-per-epoch-and-healthy.md) | The cosine schedule is stepped per **epoch** and the LR stays healthy — a source-reading theory, refuted by measurement | CONFIRMED (negative) | `P2-25` |
 | [E038](./E038-per-group-lr-sgd-sweep.md) | Per-group feature/head `lr` up to 100× does not rescue SGD (feature displacement saturates); neither do dropout off, `weight_decay=0`, or both | CONFIRMED (negative) | `P2-25` |
+| [E039](./E039-e023-learning-matrix-not-reproducible-across-seeds.md) | E023's "8/8 PASS" is not reproducible: 34/36 cells across 3 seeds, and the 2 failures move between caches and devices | CONFIRMED — **supersedes E023**; `P2-29` resolved | `P2-29`, `P2-21`, `P2-28` |
 
 ## Reading shortcuts
 
