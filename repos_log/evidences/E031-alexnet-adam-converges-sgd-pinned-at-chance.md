@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | CONFIRMED — AlexNet learns (Adam, `val_acc` 24.8 %); SGD-at-chance is a clipping artefact, not an optimiser failure |
+| **Status** | PARTIALLY SUPERSEDED — the **measurements** stand and were independently reproduced in [E033](./E033-alexnet-sgd-grid-clip-init-and-budget-ruled-out.md) (Adam converges, `val_acc` 24.8 %; SGD at chance; init total grad norm 26.9). The **causal claim in the title is refuted**: `gradient_clip_val` is not what pins the SGD arm at chance. With the clip disabled and `lr` swept over two decades, and with `bf16-mixed`, and at 7 680 steps, SGD is still exactly on chance — see [E033](./E033-alexnet-sgd-grid-clip-init-and-budget-ruled-out.md), [E035](./E035-alexnet-init-is-not-what-blocks-sgd.md), [E037](./E037-lr-schedule-is-stepped-per-epoch-and-healthy.md) and [E038](./E038-per-group-lr-sgd-sweep.md). `P2-25` remains open. Kept per the evidence contract (superseded evidence stays). |
 | **Cards** | `P2-14`, `P2-11`, `P2-12` (AlexNet optimiser), new card `P2-25` (gradient clipping vs SGD) |
 | **Command** | see the two "Command" blocks below |
 | **Host** | `LX0350043`, RTX A1000 6GB Laptop GPU (sm_86), driver 535.309.01, torch 2.10.0+cu128, container `ppg-dev5` from `ppg-gpu:latest` |

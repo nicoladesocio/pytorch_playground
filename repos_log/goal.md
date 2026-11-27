@@ -94,14 +94,27 @@ Both models execute `Trainer.fit()` on CPU without error (HANDOFF_002).
 | Model | Trainable? | Notes |
 |---|---|---|
 | GoogLeNet | **Yes — converged once** | `val_acc` 4.58 % → 34.6 % against a 1.56 % chance level, `val_loss` 4.01 → 2.84, 64 classes, 227 px, GPU ([E030](./evidences/E030-googlenet-converged-run.md)). Needs `--train_samples_per_epoch 16384`; a default epoch is 65 steps and looks flat. |
-| AlexNet | **Yes — converged once, with Adam** | `val_acc` 4.58 % → 24.8 %, `val_loss` 4.03 → 3.11 ([E031](./evidences/E031-alexnet-adam-converges-sgd-pinned-at-chance.md)). Its SGD arm stays at chance because `gradient_clip_val=1.0` scales every step by 0.037 against an init gradient norm of 26.9 — that is a measurement about the clip, not a verdict on SGD (`P2-25`). |
+| AlexNet | **Yes — converged once, with Adam** | `val_acc` 4.58 % → 24.8 %, `val_loss` 4.03 → 3.11 ([E031](./evidences/E031-alexnet-adam-converges-sgd-pinned-at-chance.md)). Its SGD arm stays at chance. E031 attributed that to `gradient_clip_val=1.0` scaling every step by 0.037 against an init gradient norm of 26.9; **that attribution has since been refuted** — clip off and clip=30 are also exactly at chance, so the clip is not the blocker (`P2-25`, [E033](./evidences/E033-alexnet-sgd-grid-clip-init-and-budget-ruled-out.md)). Eight candidate causes are now eliminated by measurement — clip, fp16, step budget, init, schedule, gradient spread, dropout, `weight_decay` — across 19 SGD configurations ([E033](./evidences/E033-alexnet-sgd-grid-clip-init-and-budget-ruled-out.md)–[E038](./evidences/E038-per-group-lr-sgd-sweep.md)). `train_acc` never exceeds 1.95 % in any of them, so SGD fails to fit even its own training stream; the surviving suspect is the 4 153-unique-image effective training set. |
 
 Both models have now produced a verified converged run with committed evidence, which is the
 half of "Trainable?" that had been open since HANDOFF_001. What is **not** yet met is the rest of
 the definition of done above: the converged runs were stopped early (epoch 36 / 12 of 60) so there
-is no full-length checkpoint, `val_acc` rests on 153 validation images (`P2-27`), the `CONFIG`
-throughput numbers are unmeasured at the batch sizes shipped (`P2-26`), and no run has been made
-reproducible end-to-end from `train_final.py` on the target hardware. See
+is no full-length checkpoint, the `CONFIG` throughput numbers are unmeasured at the batch sizes
+shipped (`P2-26`), and no run has been made reproducible end-to-end from `train_final.py` on the
+target hardware.
+
+**Validation resolution (`P2-27`, resolved).** `create_eval_sampler` covers every in-class
+validation sample exactly once, so `val_acc` is quantised in steps of `100 / (in-class val
+images)`. The canonical `val_samples=2048` cache holds only **153** in-class images, i.e. a
+resolution of **0.654 %** — coarser than most effects this repo has drawn conclusions from, and
+the reason HANDOFF_003 read 1–7 images changing side as training "oscillation". The documented fix
+is **`val_samples=16384`**, which yields **1030 in-class validation images and a resolution of
+0.0971 %** (measured by `python probes/check_val_pool.py --val_samples 16384 --predict 1000`,
+[E036](./evidences/E036-validation-pool-size-and-accuracy-resolution.md)); both `CONFIG` dicts now
+ship that value. One caveat travels with it: `val_samples` feeds `choose_target_classes`'s
+`min_val_count` filter, so changing it changes *which* 64 classes are chosen — 8 of 64 differ
+between the two pools. Accuracy figures from the 2048 caches (E030, E031) are therefore **not**
+comparable with runs on the 16384 pool; re-baseline rather than comparing across. See
 [KANBAN.md](./KANBAN.md) for the prioritised work.
 
 ## Ground rules for agents
